@@ -1,141 +1,228 @@
-# 🚀 Welcome to Z.ai Code Scaffold
+# 🧠 Safer Growing Intelligence: DAF Project Dashboard
 
-A modern, production-ready web application scaffold powered by cutting-edge technologies, designed to accelerate your development with [Z.ai](https://chat.z.ai)'s AI-powered coding assistance.
+A comprehensive web interface for monitoring and interacting with the Developmental AGI Framework (DAF) - a structured approach to growing safe, general intelligence.
 
-## ✨ Technology Stack
+## 🎯 Project Overview
 
-This scaffold provides a robust foundation built with:
+This dashboard provides real-time monitoring and control of the Safer Growing Intelligence system, which focuses on **how** an intelligence learns rather than just **what** it knows. The system treats LLMs as output mechanisms while using custom Python classes as the brain structure for memory, safety, and learning strategy.
 
-### 🎯 Core Framework
-- **⚡ Next.js 15** - The React framework for production with App Router
-- **📘 TypeScript 5** - Type-safe JavaScript for better developer experience
-- **🎨 Tailwind CSS 4** - Utility-first CSS framework for rapid UI development
+## 🏗️ Architecture Components
 
-### 🧩 UI Components & Styling
-- **🧩 shadcn/ui** - High-quality, accessible components built on Radix UI
-- **🎯 Lucide React** - Beautiful & consistent icon library
-- **🌈 Framer Motion** - Production-ready motion library for React
-- **🎨 Next Themes** - Perfect dark mode in 2 lines of code
+### Core Systems
+- **Persistent Memory System**: Knowledge graph with consolidation and pruning
+- **Meta Learning**: Learning strategy evaluation and optimization
+- **Virtual Environment**: Structured curriculum with domain-specific testing
+- **Emergent Behavior Detector**: Safety monitoring and anomaly detection
+- **Real-time LLM Integration**: Connection to high-end models for reasoning
 
-### 📋 Forms & Validation
-- **🎣 React Hook Form** - Performant forms with easy validation
-- **✅ Zod** - TypeScript-first schema validation
+## 🚀 Features
 
-### 🔄 State Management & Data Fetching
-- **🐻 Zustand** - Simple, scalable state management
-- **🔄 TanStack Query** - Powerful data synchronization for React
-- **🌐 Axios** - Promise-based HTTP client
+### 📊 Dashboard Overview
+- **System Status**: Real-time monitoring of AGI system health
+- **Development Progress**: Track progression through developmental stages
+- **Memory Statistics**: Monitor knowledge acquisition and consolidation
+- **Safety Alerts**: Immediate notification of anomalous behavior
 
-### 🗄️ Database & Backend
-- **🗄️ Prisma** - Next-generation Node.js and TypeScript ORM
-- **🔐 NextAuth.js** - Complete open-source authentication solution
+### 🧠 Memory System
+- **Knowledge Graph Visualization**: Interactive display of concepts and relationships
+- **Memory Management**: Add, search, and filter memory concepts
+- **Confidence Tracking**: Monitor reliability of stored knowledge
+- **Category Organization**: Organize memories by domain (Ethics, Logic, Social, Physics)
 
-### 🎨 Advanced UI Features
-- **📊 TanStack Table** - Headless UI for building tables and datagrids
-- **🖱️ DND Kit** - Modern drag and drop toolkit for React
-- **📊 Recharts** - Redefined chart library built with React and D3
-- **🖼️ Sharp** - High performance image processing
+### 📈 AGI Status Monitoring
+- **Performance Metrics**: CPU, memory, and processing speed monitoring
+- **Developmental Levels**: Track progression through Caveman → Child → Apprentice → Scholar → Elder
+- **System Health**: Overall system status and safety indicators
+- **Session Management**: Monitor active AGI sessions
 
-### 🌍 Internationalization & Utilities
-- **🌍 Next Intl** - Internationalization library for Next.js
-- **📅 Date-fns** - Modern JavaScript date utility library
-- **🪝 ReactUse** - Collection of essential React hooks for modern development
+### 🎓 Virtual Environment
+- **Curriculum Management**: Structured learning paths across domains
+- **Progress Tracking**: Monitor completion of training exercises
+- **Performance Scoring**: Evaluate AGI performance in different scenarios
+- **Domain-Specific Testing**: Ethics, Logic, Social, and Physics challenges
 
-## 🎯 Why This Scaffold?
+### 🧮 Meta Learning Analytics
+- **Strategy Performance**: Effectiveness analysis of learning approaches
+- **Usage Statistics**: Track frequency and success of different strategies
+- **AI Recommendations**: Intelligent suggestions for optimization
+- **Learning Insights**: Pattern recognition and improvement suggestions
 
-- **🏎️ Fast Development** - Pre-configured tooling and best practices
-- **🎨 Beautiful UI** - Complete shadcn/ui component library with advanced interactions
-- **🔒 Type Safety** - Full TypeScript configuration with Zod validation
-- **📱 Responsive** - Mobile-first design principles with smooth animations
-- **🗄️ Database Ready** - Prisma ORM configured for rapid backend development
-- **🔐 Auth Included** - NextAuth.js for secure authentication flows
-- **📊 Data Visualization** - Charts, tables, and drag-and-drop functionality
-- **🌍 i18n Ready** - Multi-language support with Next Intl
-- **🚀 Production Ready** - Optimized build and deployment settings
-- **🤖 AI-Friendly** - Structured codebase perfect for AI assistance
+### 🛡️ Safety Monitoring
+- **Real-time Detection**: Continuous monitoring for emergent behaviors
+- **Alert Management**: Categorize and resolve safety alerts
+- **Threshold Configuration**: Customize safety parameters
+- **Emergency Protocols**: Automated response to critical anomalies
 
-## 🚀 Quick Start
+## 🛠️ Technology Stack
 
-```bash
-# Install dependencies
-npm install
+### Frontend
+- **Next.js 15** with App Router
+- **TypeScript 5** for type safety
+- **Tailwind CSS 4** for styling
+- **shadcn/ui** component library
+- **Lucide React** icons
 
-# Start development server
-npm run dev
+### Backend
+- **Next.js API Routes** for server-side logic
+- **Prisma ORM** with SQLite database
+- **Real-time updates** with server-sent events
 
-# Build for production
-npm run build
+### Database Schema
+- **AGIMemory**: Stored concepts and relationships
+- **AGISession**: System sessions and status
+- **LearningStrategy**: Strategy effectiveness tracking
+- **EmergentAlert**: Safety anomaly records
+- **VirtualEnvironment**: Training session data
 
-# Start production server
-npm start
-```
+## 🚀 Getting Started
 
-Open [http://localhost:3000](http://localhost:3000) to see your application running.
+### Prerequisites
+- Node.js 18+ 
+- npm or yarn
 
-## 🤖 Powered by Z.ai
+### Installation
 
-This scaffold is optimized for use with [Z.ai](https://chat.z.ai) - your AI assistant for:
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd safer-growing-intelligence-dashboard
+   ```
 
-- **💻 Code Generation** - Generate components, pages, and features instantly
-- **🎨 UI Development** - Create beautiful interfaces with AI assistance  
-- **🔧 Bug Fixing** - Identify and resolve issues with intelligent suggestions
-- **📝 Documentation** - Auto-generate comprehensive documentation
-- **🚀 Optimization** - Performance improvements and best practices
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
 
-Ready to build something amazing? Start chatting with Z.ai at [chat.z.ai](https://chat.z.ai) and experience the future of AI-powered development!
+3. **Set up the database**
+   ```bash
+   npm run db:push
+   ```
+
+4. **Start development server**
+   ```bash
+   npm run dev
+   ```
+
+5. **Open the application**
+   Navigate to [http://localhost:3000](http://localhost:3000)
 
 ## 📁 Project Structure
 
 ```
 src/
-├── app/                 # Next.js App Router pages
-├── components/          # Reusable React components
-│   └── ui/             # shadcn/ui components
-├── hooks/              # Custom React hooks
-└── lib/                # Utility functions and configurations
+├── app/                    # Next.js App Router
+│   ├── api/               # API endpoints
+│   │   ├── memory/        # Memory system API
+│   │   ├── status/        # System status API
+│   │   ├── alerts/        # Safety alerts API
+│   │   ├── learning/      # Learning strategies API
+│   │   └── environment/   # Virtual environment API
+│   ├── page.tsx          # Main dashboard
+│   ├── layout.tsx        # Root layout
+│   └── globals.css       # Global styles
+├── components/           # React components
+│   ├── ui/              # shadcn/ui components
+│   ├── MemorySystem.tsx  # Memory management
+│   ├── AGIStatus.tsx    # System monitoring
+│   ├── VirtualEnvironment.tsx # Training environment
+│   ├── MetaLearning.tsx # Learning analytics
+│   └── EmergentBehaviorDetector.tsx # Safety monitoring
+├── hooks/               # Custom React hooks
+├── lib/                # Utility functions
+└── prisma/             # Database schema
 ```
 
-## 🎨 Available Features & Components
+## 🔧 Configuration
 
-This scaffold includes a comprehensive set of modern web development tools:
+### Environment Variables
+Create a `.env.local` file with:
+```
+DATABASE_URL="file:./dev.db"
+```
 
-### 🧩 UI Components (shadcn/ui)
-- **Layout**: Card, Separator, Aspect Ratio, Resizable Panels
-- **Forms**: Input, Textarea, Select, Checkbox, Radio Group, Switch
-- **Feedback**: Alert, Toast (Sonner), Progress, Skeleton
-- **Navigation**: Breadcrumb, Menubar, Navigation Menu, Pagination
-- **Overlay**: Dialog, Sheet, Popover, Tooltip, Hover Card
-- **Data Display**: Badge, Avatar, Calendar
+### Database Setup
+The application uses SQLite with Prisma ORM. The schema includes:
+- Memory concepts with confidence scores
+- Learning strategies with effectiveness tracking
+- Safety alerts with severity levels
+- Virtual environment sessions
 
-### 📊 Advanced Data Features
-- **Tables**: Powerful data tables with sorting, filtering, pagination (TanStack Table)
-- **Charts**: Beautiful visualizations with Recharts
-- **Forms**: Type-safe forms with React Hook Form + Zod validation
+## 🎯 Usage Guide
 
-### 🎨 Interactive Features
-- **Animations**: Smooth micro-interactions with Framer Motion
-- **Drag & Drop**: Modern drag-and-drop functionality with DND Kit
-- **Theme Switching**: Built-in dark/light mode support
+### Monitoring the AGI System
+1. **Overview Tab**: Get a quick snapshot of system health and progress
+2. **Memory Tab**: Explore the knowledge graph and manage concepts
+3. **Status Tab**: Monitor real-time performance metrics
+4. **Environment Tab**: Manage training curriculum and sessions
+5. **Learning Tab**: Analyze strategy effectiveness
+6. **Safety Tab**: Monitor and resolve safety alerts
 
-### 🔐 Backend Integration
-- **Authentication**: Ready-to-use auth flows with NextAuth.js
-- **Database**: Type-safe database operations with Prisma
-- **API Client**: HTTP requests with Axios + TanStack Query
-- **State Management**: Simple and scalable with Zustand
+### Managing Memory
+- **Add Concepts**: Create new memory entries with confidence levels
+- **Search & Filter**: Find specific concepts or categories
+- **View Relationships**: Explore knowledge connections
+- **Track Confidence**: Monitor reliability of stored information
 
-### 🌍 Production Features
-- **Internationalization**: Multi-language support with Next Intl
-- **Image Optimization**: Automatic image processing with Sharp
-- **Type Safety**: End-to-end TypeScript with Zod validation
-- **Essential Hooks**: 100+ useful React hooks with ReactUse for common patterns
+### Safety Monitoring
+- **Real-time Alerts**: Immediate notification of anomalies
+- **Severity Levels**: Categorize alerts by importance
+- **Resolution Management**: Track and resolve safety issues
+- **Configuration**: Customize detection thresholds
 
-## 🤝 Get Started with Z.ai
+## 🔒 Safety Features
 
-1. **Clone this scaffold** to jumpstart your project
-2. **Visit [chat.z.ai](https://chat.z.ai)** to access your AI coding assistant
-3. **Start building** with intelligent code generation and assistance
-4. **Deploy with confidence** using the production-ready setup
+### Emergent Behavior Detection
+- **Capability Leap Detection**: Identify sudden performance increases
+- **Behavioral Anomaly Monitoring**: Detect unusual response patterns
+- **Knowledge Jump Recognition**: Flag unexpected knowledge acquisition
+- **Safety Threshold Enforcement**: Maintain safe operational boundaries
+
+### Developmental Safeguards
+- **Stage-Based Progression**: Controlled advancement through levels
+- **Baseline Comparison**: Compare behavior against expected patterns
+- **Human Review Required**: Critical anomalies need human approval
+- **Emergency Protocols**: Automated response to dangerous behavior
+
+## 📊 API Endpoints
+
+### Memory System
+- `GET /api/memory` - Retrieve all memory concepts
+- `POST /api/memory` - Add new memory concept
+
+### System Status
+- `GET /api/status` - Get current system status
+
+### Safety Alerts
+- `GET /api/alerts` - Retrieve all alerts
+- `POST /api/alerts` - Create new alert
+
+### Learning Analytics
+- `GET /api/learning` - Get learning strategies
+- `POST /api/learning` - Update strategy performance
+
+### Virtual Environment
+- `GET /api/environment` - Get training sessions
+- `POST /api/environment` - Start new session
+- `PUT /api/environment` - Update session progress
+
+## 🤝 Contributing
+
+This project is part of the Safer Growing Intelligence initiative. Contributions are welcome for:
+
+- **UI/UX Improvements**: Enhance dashboard usability
+- **Safety Features**: Strengthen monitoring and detection
+- **Performance Optimization**: Improve system responsiveness
+- **Documentation**: Expand guides and API documentation
+
+## 📜 License
+
+This project maintains the same license as the original Safer Growing Intelligence repository.
+
+## 🔗 Related Projects
+
+- [Safer Growing Intelligence - Core Framework](https://github.com/craighckby-stack/Safer-Growing-Intelligence-DAF-)
+- [Developmental AGI Framework Documentation](https://github.com/craighckby-stack/Safer-Growing-Intelligence-DAF-/blob/main/README.md)
 
 ---
 
-Built with ❤️ for the developer community. Supercharged by [Z.ai](https://chat.z.ai) 🚀
+Built with ❤️ for the future of safe artificial intelligence development.
