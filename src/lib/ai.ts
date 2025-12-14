@@ -1,6 +1,11 @@
-import { GoogleGenAI } from '@google/genai';
+/**
+ * AI Service using Official Google Generative AI SDK
+ * @package @google/generative-ai (CORRECT package name)
+ */
 
-// Enhanced type definitions
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+// Type definitions
 interface AIRequest {
   content: string;
   context?: string;
@@ -12,9 +17,9 @@ interface AIResponse {
   content: string;
   model: string;
   usage?: {
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
   };
 }
 
@@ -25,603 +30,362 @@ interface EnhancementOptions {
   improveErrorHandling?: boolean;
 }
 
-// Constants for better maintainability
+// Constants
 const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_MAX_TOKENS = 8192;
 const MAX_CONTENT_LENGTH = 30000;
 const MIN_CONTENT_LENGTH = 10;
 const MAX_RETRIES = 3;
-const RETRY_DELAY_BASE = 1000; // ms
+const RETRY_DELAY_BASE = 1000;
 
-const SYSTEM_CONTEXT = `You are an expert code improvement assistant. Your task is to enhance code quality while maintaining functionality.
+// System context for code enhancement
+const SYSTEM_CONTEXT = `You are an expert code reviewer and enhancer. Your task is to improve code quality by:
+1. Adding clear, helpful comments
+2. Optimizing performance where possible
+3. Improving error handling
+4. Maintaining backward compatibility
+5. Following best practices
 
-Guidelines:
-1. Improve code readability and maintainability
-2. Optimize performance where possible
-3. Add error handling and validation
-4. Follow best practices for language
-5. Add helpful comments for complex logic
-6. Ensure backwards compatibility
-7. Return ONLY improved code, no explanations or markdown formatting
+Return ONLY the improved code without explanations or markdown formatting.`;
 
-CRITICAL: Output only raw code without any markdown formatting, code blocks, or explanations.`;
+// Initialize AI client (singleton)
+let genAI: GoogleGenerativeAI | null = null;
 
-// Initialize Google GenAI client once at module level
-let googleAI: GoogleGenAI | null = null;
-
-/**
- * Initialize Google GenAI client
- */
-function getGoogleGenAI(): GoogleGenAI {
-  if (!googleAI) {
-    const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
-    if (!apiKey || apiKey.includes('placeholder') || apiKey === 'AIzaSy_placeholder_key') {
-      throw new Error('Please replace the placeholder Gemini API key with a real key from https://makersuite.google.com/app/apikey');
-    }
-    googleAI = new GoogleGenAI({ apiKey });
+function getAIClient(): GoogleGenerativeAI {
+  // Always create fresh client to get latest environment variables
+  const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+  
+  if (!apiKey) {
+    throw new Error('Please set GOOGLE_API_KEY or GEMINI_API_KEY environment variable');
   }
-  return googleAI;
+  
+  if (apiKey.includes('placeholder') || apiKey === 'AIzaSy_placeholder_key') {
+    throw new Error(
+      'Placeholder API key detected. Please replace with a real Gemini API key from https://makersuite.google.com/app/apikey'
+    );
+  }
+  
+  // Return fresh client each time to pick up new environment variables
+  return new GoogleGenerativeAI(apiKey);
 }
 
 /**
- * Enhanced AI integration with comprehensive error handling and performance optimization
+ * Make AI request using official Google Generative AI SDK
  */
-export async function sendToAI(content: string, options: EnhancementOptions = {}): Promise<string> {
-  // Enhanced input validation
-  if (!content || typeof content !== 'string') {
-    throw new Error('Invalid content provided to AI: must be a non-empty string');
-  }
-
-  if (content.length < MIN_CONTENT_LENGTH) {
-    throw new Error('Content too short for meaningful enhancement');
-  }
-
-  // Enhanced content preprocessing
-  const processedContent = preprocessContent(content);
+async function makeAIRequest(config: AIRequest): Promise<AIResponse> {
+  const client = getAIClient();
   
-  if (processedContent.length > MAX_CONTENT_LENGTH) {
-    console.warn(`Content exceeds recommended length (${processedContent.length} > ${MAX_CONTENT_LENGTH}), truncating...`);
-    // Smart truncation that preserves code structure
-    content = smartTruncate(processedContent, MAX_CONTENT_LENGTH);
-  } else {
-    content = processedContent;
+  // Get the model
+  const model = client.getGenerativeModel({ 
+    model: 'gemini-2.0-flash',
+    systemInstruction: SYSTEM_CONTEXT,
+    generationConfig: {
+      temperature: config.temperature || DEFAULT_TEMPERATURE,
+      maxOutputTokens: config.maxTokens || DEFAULT_MAX_TOKENS,
+    },
+  });
+
+  try {
+    // Generate content
+    const result = await model.generateContent(config.content);
+    const response = result.response;
+    const text = response.text();
+
+    // Validate response
+    if (!text || text.trim().length === 0) {
+      throw new Error('Empty response from AI model');
+    }
+
+    return {
+      content: text,
+      model: 'gemini-1.5-flash',
+      usage: response.usageMetadata ? {
+        promptTokens: response.usageMetadata.promptTokenCount,
+        completionTokens: response.usageMetadata.candidatesTokenCount,
+        totalTokens: response.usageMetadata.totalTokenCount,
+      } : undefined,
+    };
+  } catch (error: any) {
+    // Enhanced error categorization
+    const errorMsg = error?.message?.toLowerCase() || '';
+    
+    if (errorMsg.includes('api key') || errorMsg.includes('authentication')) {
+      throw new Error(`Authentication failed: ${error.message}. Check your GOOGLE_API_KEY`);
+    }
+    
+    if (errorMsg.includes('rate limit') || errorMsg.includes('quota')) {
+      throw new Error(`Rate limit exceeded: ${error.message}. Try again later`);
+    }
+    
+    if (errorMsg.includes('timeout')) {
+      throw new Error(`Request timeout: ${error.message}. Try again`);
+    }
+    
+    throw new Error(`AI request failed: ${error.message}`);
   }
+}
 
-  const requestConfig: AIRequest = {
-    content: buildPrompt(content, options),
-    temperature: options.temperature || DEFAULT_TEMPERATURE,
-    maxTokens: options.maxTokens || DEFAULT_MAX_TOKENS
-  };
-
-  let lastError: Error | null;
+/**
+ * Retry wrapper with exponential backoff
+ */
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  retries = MAX_RETRIES
+): Promise<T> {
+  let lastError: Error = new Error('Unknown error');
   
-  // Enhanced retry logic with exponential backoff
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+  for (let i = 0; i < retries; i++) {
     try {
-      const response = await makeAIRequest(requestConfig);
-      const enhancedContent = processAIResponse(response);
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
       
-      // Enhanced validation of response
-      validateAIResponse(enhancedContent, content);
+      // Don't retry authentication errors
+      if (error.message?.includes('Authentication') || error.message?.includes('API key')) {
+        throw error;
+      }
       
-      return enhancedContent;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error('Unknown error');
-      
-      if (attempt < MAX_RETRIES) {
-        const delay = RETRY_DELAY_BASE * Math.pow(2, attempt - 1);
-        console.warn(`AI request failed (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay}ms:`, lastError.message);
+      // Wait before retry
+      if (i < retries - 1) {
+        const delay = RETRY_DELAY_BASE * Math.pow(2, i);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
   }
-
-  throw new Error(`AI enhancement failed after ${MAX_RETRIES} attempts: ${lastError?.message || 'Unknown error'}`);
+  
+  throw lastError;
 }
 
 /**
- * Enhanced content preprocessing
+ * Preprocess content before sending to AI
  */
 function preprocessContent(content: string): string {
-  // Remove excessive whitespace
-  let processed = content.replace(/\s+/g, ' ').trim();
+  let processed = content.trim();
   
-  // Normalize line endings
-  processed = processed.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // Remove markdown code blocks if present
+  processed = processed.replace(/```[\w]*\n?/g, '');
   
-  // Remove potential sensitive information (basic implementation)
-  processed = processed.replace(/password\s*=\s*['"][^'"]*['"]?/gi, 'password=***');
-  processed = processed.replace(/api[_-]?key\s*=\s*['"][^'"]*['"]?/gi, 'api_key=***');
+  // Remove leading/trailing whitespace from lines
+  processed = processed.split('\n').map(line => line.trimEnd()).join('\n');
+  
+  // Truncate if too long
+  if (processed.length > MAX_CONTENT_LENGTH) {
+    processed = processed.substring(0, MAX_CONTENT_LENGTH) + '\n// ... (truncated)';
+  }
   
   return processed;
 }
 
 /**
- * Enhanced prompt building
+ * Clean AI response
  */
-function buildPrompt(content: string, options: EnhancementOptions): string {
-  let prompt = SYSTEM_CONTEXT + '\n\n';
+function cleanResponse(response: string): string {
+  let cleaned = response.trim();
   
-  // Add specific instructions based on options
-  if (options.addComments) {
-    prompt += 'Please add helpful comments explaining complex logic.\n';
-  }
+  // Remove markdown code blocks
+  cleaned = cleaned.replace(/```[\w]*\n?/g, '');
+  cleaned = cleaned.replace(/```\n?/g, '');
   
-  if (options.optimizePerformance) {
-    prompt += 'Please optimize for performance and efficiency.\n';
-  }
+  // Remove explanatory text before/after code
+  const lines = cleaned.split('\n');
+  let startIdx = 0;
+  let endIdx = lines.length;
   
-  if (options.improveErrorHandling) {
-    prompt += 'Please add comprehensive error handling and validation.\n';
-  }
-  
-  if (options.maintainCompatibility) {
-    prompt += 'Please ensure backwards compatibility.\n';
-  }
-  
-  prompt += `Improve this code for readability, efficiency, and stability:\n\n${content}`;
-  
-  return prompt;
-}
-
-/**
- * Enhanced AI request using official Google GenAI SDK
- */
-async function makeAIRequest(config: AIRequest): Promise<any> {
-  try {
-    const ai = getGoogleGenAI();
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [{
-        parts: [{
-          text: config.content
-        }]
-      }],
-      config: {
-        systemInstruction: SYSTEM_CONTEXT,
-        temperature: config.temperature || DEFAULT_TEMPERATURE,
-        maxOutputTokens: config.maxTokens || DEFAULT_MAX_TOKENS,
-      }
-    });
-
-    // Enhanced response validation
-    if (!response || !response.response || !response.response.candidates || response.response.candidates.length === 0) {
-      throw new Error('Invalid AI response: no candidates returned');
+  // Find first line that looks like code
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].match(/^(import|export|const|let|var|function|class|interface|type|async|\/\/|\/\*|\{|\})/)) {
+      startIdx = i;
+      break;
     }
-
-    const candidate = response.response.candidates[0];
-    if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
-      throw new Error('Invalid AI response: no content returned');
+  }
+  
+  // Find last line that looks like code
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trim().length > 0 && !lines[i].match(/^(here|this|the|note|explanation|summary|improved)/i)) {
+      endIdx = i + 1;
+      break;
     }
-
-    const content = candidate.content.parts[0].text;
-    const usage = response.usageMetadata;
-
-    return {
-      content: content,
-      model: response.model || 'gemini-1.5-flash',
-      usage: {
-        promptTokens: usage?.promptTokenCount || 0,
-        completionTokens: usage?.candidatesTokenCount || 0,
-        totalTokens: usage?.totalTokenCount || 0,
-      }
-    };
-  } catch (error) {
-    // Enhanced error categorization
-    if (error instanceof Error) {
-      if (error.message.includes('quota') || error.message.includes('limit')) {
-        throw new Error(`AI quota exceeded: ${error.message}`);
-      }
-      
-      if (error.message.includes('permission') || error.message.includes('access')) {
-        throw new Error(`AI access denied: ${error.message}`);
-      }
-      
-      if (error.message.includes('timeout') || error.message.includes('network')) {
-        throw new Error(`AI network error: ${error.message}`);
-      }
-    }
-    
-    throw error;
-  }
-}
-
-/**
- * Enhanced AI response processing
- */
-function processAIResponse(response: any): string {
-  let aiText = response.content;
-  
-  if (!aiText || typeof aiText !== 'string') {
-    throw new Error('Invalid AI response: empty or non-string content');
-  }
-
-  // Enhanced content cleaning
-  let cleanedText = aiText.trim();
-  
-  // Remove markdown code blocks with better handling
-  cleanedText = removeMarkdownCodeBlocks(cleanedText);
-  
-  // Remove explanatory text (common patterns)
-  cleanedText = removeExplanatoryText(cleanedText);
-  
-  // Normalize whitespace
-  cleanedText = normalizeWhitespace(cleanedText);
-  
-  // Validate final result
-  if (cleanedText.length < MIN_CONTENT_LENGTH) {
-    throw new Error('AI response too short to be valid code');
   }
   
-  return cleanedText;
-}
-
-/**
- * Enhanced markdown code block removal
- */
-function removeMarkdownCodeBlocks(content: string): string {
-  // Handle multiple code block formats
-  const patterns = [
-    /```[\s\S]*\n?([\s\S]*?)\n?```/gi, // Standard code blocks
-    /`([^`]+)`/g, // Inline code
-    /^[\s]*Here is the improved code:[\s]*$/im, // Explanatory prefixes
-    /^[\s]*Improved version:[\s]*$/im // Explanatory prefixes
-  ];
-  
-  let cleaned = content;
-  
-  for (const pattern of patterns) {
-    cleaned = cleaned.replace(pattern, '$1');
-  }
+  cleaned = lines.slice(startIdx, endIdx).join('\n');
   
   return cleaned.trim();
 }
 
 /**
- * Remove explanatory text patterns
+ * Main enhancement function
  */
-function removeExplanatoryText(content: string): string {
-  const lines = content.split('\n');
-  const cleanedLines: string[] = [];
-  
-  for (const line of lines) {
-    const trimmed = line.trim();
-    
-    // Skip common explanatory patterns
-    if (
-      trimmed.startsWith('//') && 
-      (trimmed.includes('improvement') || 
-       trimmed.includes('enhancement') || 
-       trimmed.includes('change') ||
-       trimmed.includes('modified'))
-    ) {
-      continue;
-    }
-    
-    if (
-      trimmed.startsWith('/*') && 
-      (trimmed.includes('improvement') || 
-       trimmed.includes('enhancement') || 
-       trimmed.includes('change') ||
-       trimmed.includes('modified'))
-    ) {
-      continue;
-    }
-    
-    cleanedLines.push(line);
+export async function sendToAI(
+  code: string,
+  options: EnhancementOptions = {}
+): Promise<string> {
+  // Validate input
+  if (!code || code.trim().length < MIN_CONTENT_LENGTH) {
+    throw new Error('Code content is too short or empty');
   }
+
+  // Preprocess
+  const processedCode = preprocessContent(code);
   
-  return cleanedLines.join('\n');
+  // Build prompt
+  let prompt = `Enhance the following code:\n\n${processedCode}\n\n`;
+  
+  if (options.addComments) prompt += 'Add helpful comments. ';
+  if (options.optimizePerformance) prompt += 'Optimize for performance. ';
+  if (options.improveErrorHandling) prompt += 'Improve error handling. ';
+  if (options.maintainCompatibility) prompt += 'Maintain backward compatibility. ';
+
+  // Make request with retry
+  const response = await retryWithBackoff(() => 
+    makeAIRequest({
+      content: prompt,
+      temperature: DEFAULT_TEMPERATURE,
+      maxTokens: DEFAULT_MAX_TOKENS,
+    })
+  );
+
+  // Clean and return
+  return cleanResponse(response.content);
 }
 
 /**
- * Enhanced whitespace normalization
+ * Check if file should be enhanced
  */
-function normalizeWhitespace(content: string): string {
-  // Preserve intentional spacing in strings but normalize elsewhere
-  return content
-    .replace(/\t/g, '  ') // Tabs to spaces
-    .replace(/\n{3,}/g, '\n') // Multiple newlines to single
-    .replace(/[ \t]+$/gm, '') // Trailing whitespace
-    .trim();
-}
-
-/**
- * Smart truncation that preserves code structure
- */
-function smartTruncate(content: string, maxLength: number): string {
-  if (content.length <= maxLength) {
-    return content;
-  }
+export function shouldEnhanceFile(path: string, content: string): {
+  should: boolean;
+  reason: string;
+  priority: number;
+} {
+  const ext = path.split('.').pop()?.toLowerCase();
+  const size = content.length;
   
-  // Try to truncate at logical boundaries
-  const lines = content.split('\n');
-  let truncated = '';
-  let currentLength = 0;
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const lineLength = line.length + 1; // +1 for newline
-    
-    if (currentLength + lineLength > maxLength) {
-      // Truncate the line to fit
-      const remainingLength = maxLength - currentLength;
-      truncated += line.substring(0, remainingLength);
-      truncated += '\n// ... (truncated)';
-      break;
-    }
-    
-    truncated += line + '\n';
-    currentLength += lineLength;
-  }
-  
-  return truncated;
-}
-
-/**
- * Enhanced response validation
- */
-function validateAIResponse(enhanced: string, original: string): void {
-  // Check for meaningful changes
-  if (enhanced === original.trim()) {
-    console.warn('AI returned unchanged content');
-  }
-  
-  // Check for common error patterns
-  const errorPatterns = [
-    /error/i,
-    /cannot/i,
-    /failed/i,
-    /unable/i
-  ];
-  
-  for (const pattern of errorPatterns) {
-    if (pattern.test(enhanced)) {
-      console.warn('AI response may contain error messages:', enhanced);
-    }
-  }
-  
-  // Validate basic code structure (simplified)
-  const hasCodeStructure = 
-    enhanced.includes('{') || enhanced.includes('function') || 
-    enhanced.includes('class') || enhanced.includes('import') ||
-    enhanced.includes('const') || enhanced.includes('let') ||
-    enhanced.includes('=') || enhanced.includes('return');
-    
-  if (!hasCodeStructure && enhanced.length > MIN_CONTENT_LENGTH) {
-    console.warn('AI response may not contain valid code structure');
-  }
-}
-
-/**
- * Enhanced file analysis for better enhancement decisions
- */
-export function shouldEnhanceFile(filePath: string, content: string): { should: boolean; reason: string; priority: number } {
-  // Enhanced file size analysis
-  if (content.length < 50) {
-    return { 
-      should: false, 
-      reason: 'File too small for meaningful enhancement',
-      priority: 1
-    };
-  }
-
-  // Enhanced file type detection
-  const fileExtension = filePath.split('.').pop()?.toLowerCase();
-  const codeExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'hpp', 'cs', 'php', 'rb', 'go', 'rs', 'swift', 'kt', 'scala', 'r', 'm', 'sql', 'sh', 'bash', 'zsh', 'fish', 'ps1', 'psm1', 'html', 'css', 'scss', 'less', 'sass', 'vue', 'svelte', 'astro'];
-  const configExtensions = ['json', 'yaml', 'yml', 'toml', 'ini', 'env', 'config', 'conf', 'xml', 'plist', 'properties'];
-  const docExtensions = ['md', 'txt', 'rst', 'adoc', 'readme'];
-  const binaryExtensions = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'ico', 'pdf', 'zip', 'tar', 'gz', 'exe', 'dll', 'so', 'dylib', 'woff', 'woff2', 'ttf', 'eot', 'mp3', 'mp4', 'avi', 'mov', 'mpg', 'mpeg', 'wav', 'flac', 'ogg'];
-
   // Skip binary files
-  if (binaryExtensions.includes(fileExtension || '')) {
-    return { 
-      should: false, 
-      reason: 'Binary file',
-      priority: 1
-    };
+  if (['jpg', 'png', 'gif', 'pdf', 'zip', 'tar', 'gz'].includes(ext || '')) {
+    return { should: false, reason: 'Binary file', priority: 0 };
   }
-
-  // Enhanced configuration file handling
-  if (configExtensions.includes(fileExtension || '')) {
-    // Allow enhancement of documentation but be more cautious
-    if (docExtensions.includes(fileExtension || '')) {
-      return { 
-        should: true, 
-        reason: 'Documentation file',
-        priority: 2
-      };
-    }
-    
-    return { 
-      should: false, 
-      reason: 'Configuration file (potentially sensitive)',
-      priority: 1
-    };
-  }
-
-  // Enhanced lock file detection
-  const lockPatterns = [
-    /package-lock\.json$/i,
-    /yarn\.lock$/i,
-    /gemfile\.lock$/i,
-    /composer\.lock$/i,
-    /pipfile\.lock$/i,
-    /poetry\.lock$/i
-  ];
   
-  for (const pattern of lockPatterns) {
-    if (pattern.test(filePath)) {
-      return { 
-        should: false, 
-        reason: 'Lock file (should not be modified)',
-        priority: 1
-      };
-    }
+  // Skip lock files
+  if (path.includes('lock') || path.includes('.lock')) {
+    return { should: false, reason: 'Lock file', priority: 0 };
   }
-
-  // Priority based on file type
-  if (codeExtensions.includes(fileExtension || '')) {
-    return { 
-      should: true, 
-      reason: 'Source code file',
-      priority: 3
-    };
+  
+  // Skip very large files
+  if (size > 100000) {
+    return { should: false, reason: 'File too large', priority: 0 };
   }
-
-  if (docExtensions.includes(fileExtension || '')) {
-    return { 
-      should: true, 
-      reason: 'Documentation file',
-      priority: 2
-    };
+  
+  // Skip very small files
+  if (size < 50) {
+    return { should: false, reason: 'File too small', priority: 0 };
   }
-
-  return { 
-    should: true, 
-    reason: 'Unknown file type',
-    priority: 2
-  };
+  
+  // Prioritize code files
+  const codeExts = ['ts', 'tsx', 'js', 'jsx', 'py', 'java', 'cpp', 'c', 'go', 'rs'];
+  if (codeExts.includes(ext || '')) {
+    return { should: true, reason: 'Code file', priority: 2 };
+  }
+  
+  // Lower priority for config files
+  const configExts = ['json', 'yaml', 'yml', 'toml', 'ini'];
+  if (configExts.includes(ext || '')) {
+    return { should: true, reason: 'Config file', priority: 1 };
+  }
+  
+  return { should: false, reason: 'Unknown file type', priority: 0 };
 }
 
 /**
- * Enhanced improvement summary generation
- */
-export function generateEnhancementSummary(originalCode: string, enhancedCode: string, filePath: string): string {
-  const improvements: string[] = [];
-  
-  // Enhanced code analysis
-  const originalLines = originalCode.split('\n');
-  const enhancedLines = enhancedCode.split('\n');
-  
-  // Size comparison
-  const sizeDiff = enhancedCode.length - originalCode.length;
-  const sizeChangePercent = originalCode.length > 0 ? (sizeDiff / originalCode.length) * 100 : 0;
-  
-  if (Math.abs(sizeChangePercent) > 5) {
-    improvements.push(`Significant size change (${sizeChangePercent > 0 ? '+' : ''}${sizeChangePercent.toFixed(1)}%)`);
-  }
-  
-  // Line count comparison
-  const lineDiff = enhancedLines.length - originalLines.length;
-  if (Math.abs(lineDiff) > 5) {
-    improvements.push(`Line count changed by ${lineDiff > 0 ? '+' : ''}${lineDiff}`);
-  }
-  
-  // Enhanced pattern detection
-  if (enhancedCode.includes('try') && !originalCode.includes('try')) {
-    improvements.push('Added error handling');
-  }
-  
-  if (enhancedCode.includes('catch') && !originalCode.includes('catch')) {
-    improvements.push('Added error catching');
-  }
-  
-  if (enhancedCode.includes('const') && originalCode.includes('var')) {
-    improvements.push('Updated variable declarations (var → const)');
-  }
-  
-  if (enhancedCode.includes('let') && originalCode.includes('var')) {
-    improvements.push('Updated variable declarations (var → let)');
-  }
-  
-  // Enhanced comment analysis
-  const commentLines = enhancedLines.filter(line => 
-    line.trim().startsWith('//') || 
-    line.trim().startsWith('/*') || 
-    line.trim().startsWith('*') ||
-    line.trim().startsWith('<!--')
-  );
-  
-  const originalCommentLines = originalLines.filter(line => 
-    line.trim().startsWith('//') || 
-    line.trim().startsWith('/*') || 
-    line.trim().startsWith('*') ||
-    line.trim().startsWith('<!--')
-  );
-  
-  if (commentLines.length > originalCommentLines.length) {
-    improvements.push('Added documentation/comments');
-  }
-  
-  // Enhanced function and class analysis
-  const functionPattern = /function\s+\w+\s*\(/g;
-  const classPattern = /class\s+\w+/g;
-  
-  const originalFunctions = (originalCode.match(functionPattern) || []).length;
-  const enhancedFunctions = (enhancedCode.match(functionPattern) || []).length;
-  
-  if (enhancedFunctions > originalFunctions) {
-    improvements.push('Added or modified functions');
-  }
-  
-  const originalClasses = (originalCode.match(classPattern) || []).length;
-  const enhancedClasses = (enhancedCode.match(classPattern) || []).length;
-  
-  if (enhancedClasses > originalClasses) {
-    improvements.push('Added or modified classes');
-  }
-  
-  return improvements.join(', ');
-}
-
-/**
- * Enhanced batch processing for multiple files
+ * Process multiple files
  */
 export async function processMultipleFiles(
   files: Array<{ path: string; content: string }>,
   options: EnhancementOptions = {}
-): Promise<Array<{ path: string; success: boolean; enhanced: boolean; reason?: string; error?: string }>> {
+): Promise<Array<{ path: string; enhanced: string; error?: string }>> {
   const results = [];
-  const batchSize = 5; // Process 5 files at a time to avoid overwhelming AI
   
-  // Create batches
-  const batches = [];
-  for (let i = 0; i < files.length; i += batchSize) {
-    batches.push(files.slice(i, i + batchSize));
-  }
-  
-  for (const batch of batches) {
-    const batchPromises = batch.map(async (file) => {
-      try {
-        const shouldEnhance = shouldEnhanceFile(file.path, file.content);
-        
-        if (!shouldEnhance.should) {
-          return {
-            path: file.path,
-            success: true,
-            enhanced: false,
-            reason: shouldEnhance.reason
-          };
-        }
-        
-        const enhanced = await sendToAI(file.content, options);
-        
-        return {
+  for (const file of files) {
+    try {
+      const analysis = shouldEnhanceFile(file.path, file.content);
+      
+      if (!analysis.should) {
+        results.push({
           path: file.path,
-          success: true,
-          enhanced: true,
-          reason: shouldEnhance.reason
-        };
-      } catch (error) {
-        return {
-          path: file.path,
-          success: false,
-          enhanced: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
+          enhanced: file.content,
+          error: `Skipped: ${analysis.reason}`,
+        });
+        continue;
       }
-    });
-    
-    const batchResults = await Promise.all(batchPromises);
-    results.push(...batchResults);
-    
-    // Small delay between batches to avoid overwhelming AI
-    if (batches.indexOf(batch) < batches.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const enhanced = await sendToAI(file.content, options);
+      results.push({ path: file.path, enhanced });
+    } catch (error: any) {
+      results.push({
+        path: file.path,
+        enhanced: file.content,
+        error: error.message,
+      });
     }
   }
   
   return results;
+}
+
+/**
+ * Health check
+ */
+export async function healthCheck(): Promise<{ ok: boolean; model: string; message?: string }> {
+  try {
+    const client = getAIClient();
+    const model = client.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    
+    // Simple test
+    const result = await model.generateContent('Hello');
+    const text = result.response.text();
+    
+    return {
+      ok: !!text,
+      model: 'gemini-2.0-flash',
+    };
+  } catch (error: any) {
+    return {
+      ok: false,
+      model: 'gemini-2.0-flash',
+      message: error.message,
+    };
+  }
+}
+
+/**
+ * Generate enhancement summary for pull requests
+ */
+export async function generateEnhancementSummary(
+  fileList: string,
+  description: string
+): Promise<string> {
+  try {
+    const client = getAIClient();
+    const model = client.getGenerativeModel({ 
+      model: 'gemini-2.0-flash',
+      systemInstruction: 'You are an AI assistant that generates clear, professional commit messages and pull request descriptions.',
+    });
+
+    const prompt = `Generate a professional pull request description for the following code enhancements:
+
+Files modified: ${fileList}
+Description: ${description}
+
+Please create a concise but informative PR description that:
+1. Summarizes the changes made
+2. Highlights key improvements
+3. Maintains a professional tone
+4. Is suitable for a technical audience
+
+Format as a clean PR description without markdown formatting.`;
+
+    const result = await model.generateContent(prompt);
+    return result.response.text().trim();
+  } catch (error: any) {
+    console.error('Failed to generate enhancement summary:', error);
+    return `${description}\n\nFiles: ${fileList}`;
+  }
 }

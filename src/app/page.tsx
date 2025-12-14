@@ -352,7 +352,8 @@ export default function Home() {
       addLine(`Gemini API: ${data.gemini ? 'Configured' : 'Not configured'}`, 'output');
       addLine(`Overall Status: ${data.configured ? 'Ready' : 'Configuration required'}`, 'output');
       
-      return data.configured || false;
+      // Allow proceeding if we have API keys (even if not fully configured)
+      return data.github && data.gemini;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       addLine(`System health check failed: ${errorMessage}`, 'error');

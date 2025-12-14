@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { healthCheck } from '@/lib/ai';
 
 export async function GET() {
   try {
@@ -6,14 +7,17 @@ export async function GET() {
     const githubToken = !!process.env.GITHUB_TOKEN;
     const geminiApiKey = !!process.env.GOOGLE_API_KEY;
 
+    // Get actual AI model status
+    const aiHealth = await healthCheck();
+
     return NextResponse.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
       github: githubToken,
       gemini: geminiApiKey,
-      aiModel: 'gemini-1.5-flash',
+      aiModel: aiHealth.model,
       version: '1.0.0',
-      configured: githubToken && geminiApiKey
+      configured: githubToken && geminiApiKey && aiHealth.ok
     });
   } catch (error) {
     return NextResponse.json({

@@ -73,6 +73,7 @@ export class GitHubService {
       cacheTtlMs: options.cacheTtlMs ?? 2 * 60 * 1000
     };
 
+    // Always create fresh Octokit instance to pick up new environment variables
     this.octokit = new Octokit({
       auth: token,
       userAgent: this.defaults.userAgent,
@@ -304,6 +305,19 @@ export class GitHubService {
       return { ok: true, user: res.data?.login };
     } catch (err: any) {
       return { ok: false, message: err?.message ?? String(err) };
+    }
+  }
+
+  // Validate repository exists and is accessible
+  async validateRepository(owner?: string, repo?: string): Promise<boolean> {
+    try {
+      const params = this.resolveRepoParams(owner, repo, undefined);
+      const res: any = await this.retryWithBackoff(() => 
+        this.octokit.rest.repos.get({ owner: params.owner, repo: params.repo })
+      );
+      return !!res.data;
+    } catch (err: any) {
+      return false;
     }
   }
 

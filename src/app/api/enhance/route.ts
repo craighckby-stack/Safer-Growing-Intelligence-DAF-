@@ -52,7 +52,7 @@ const SSE_KEEPALIVE_INTERVAL = 30000; // 30 seconds
 function sendSSEMessage(controller: ReadableStreamDefaultController, data: SSEMessage): boolean {
   try {
     // Check if controller is still open
-    if (controller.signal.aborted) {
+    if (!controller || controller.desiredSize === 0) {
       return false;
     }
     
@@ -81,9 +81,6 @@ function safeSendSSE(controller: ReadableStreamDefaultController, data: SSEMessa
  */
 async function enhanceAndPushFile(
   githubService: GitHubService,
-  owner: string,
-  repo: string,
-  branch: string,
   file: { path: string; sha: string; size?: number },
   controller: ReadableStreamDefaultController
 ): Promise<FileProcessingResult> {
@@ -121,7 +118,7 @@ async function enhanceAndPushFile(
     // Enhanced file content retrieval with better error handling
     let fileContent;
     try {
-      fileContent = await githubService.getFileContent(owner, repo, file.path, branch);
+      fileContent = await githubService.getFileContent(file.path);
     } catch (error) {
       const result: FileProcessingResult = { 
         path: file.path, 
@@ -226,13 +223,12 @@ async function enhanceAndPushFile(
     // Enhanced file update with better error handling
     try {
       await githubService.updateFile(
-        owner,
-        repo,
-        branch,
         file.path,
         enhancedContent,
-        fileContent.sha,
-        `🤖 AI enhancement: ${file.path}`
+        {
+          sha: fileContent.sha,
+          message: `🤖 AI enhancement: ${file.path}`
+        }
       );
 
       const result: FileProcessingResult = { 
@@ -342,18 +338,27 @@ export async function GET(request: NextRequest) {
 
           let githubService;
           try {
-            githubService = new GitHubService();
+            // Initialize GitHub service with repository parameters
+            githubService = new GitHubService({
+              owner,
+              repo,
+              branch: baseBranch
+            });
           } catch (authError) {
             safeSendSSE(controller, {
               type: 'error',
               message: `❌ Authentication failed: ${authError instanceof Error ? authError.message : 'Invalid API credentials'}`
+            });
+            safeSendSSE(controller, {
+              type: 'info',
+              message: '💡 Please configure real API keys in the application settings or .env file'
             });
             controller.close();
             return;
           }
 
           // Enhanced repository validation
-          const isValidRepo = await githubService.validateRepository(owner, repo);
+          const isValidRepo = await githubService.validateRepository();
           if (!isValidRepo) {
             safeSendSSE(controller, {
               type: 'error',
@@ -365,7 +370,7 @@ export async function GET(request: NextRequest) {
 
           // Enhanced branch management
           const newBranch = `ai-cycle-${cycleNumber}-${Date.now()}`;
-          const branchResult = await githubService.ensureBranch(owner, repo, newBranch, baseBranch);
+          const branchResult = await githubService.ensureBranch(newBranch, { base: baseBranch });
           
           if (branchResult.created) {
             safeSendSSE(controller, {
@@ -385,7 +390,7 @@ export async function GET(request: NextRequest) {
             message: '📂 Scanning repository files...'
           });
 
-          const files = await githubService.listFilesRecursive(owner, repo, '', baseBranch);
+          const files = await githubService.listFilesRecursive();
           stats.total = files.length;
           
           safeSendSSE(controller, {
@@ -411,9 +416,6 @@ export async function GET(request: NextRequest) {
 
             const result = await enhanceAndPushFile(
               githubService,
-              owner,
-              repo,
-              newBranch,
               file,
               controller
             );
@@ -455,14 +457,12 @@ export async function GET(request: NextRequest) {
                 `Enhanced ${stats.enhanced} files in cycle ${cycleNumber}`
               );
 
-              const pr = await githubService.createPullRequest(
-                owner,
-                repo,
-                `🤖 AI Cycle ${cycleNumber} Enhancements`,
-                summary,
-                newBranch,
-                baseBranch
-              );
+              const pr = await githubService.createPullRequest({
+                title: `🤖 AI Cycle ${cycleNumber} Enhancements`,
+                body: summary,
+                head: newBranch,
+                base: baseBranch
+              });
 
               safeSendSSE(controller, {
                 type: 'success',
