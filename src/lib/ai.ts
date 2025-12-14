@@ -347,6 +347,16 @@ export async function healthCheck(): Promise<{ ok: boolean; model: string; messa
       model: 'gemini-2.0-flash',
     };
   } catch (error: any) {
+    // Check if it's just a quota issue (which means API key is valid)
+    const errorMsg = error?.message?.toLowerCase() || '';
+    if (errorMsg.includes('quota') || errorMsg.includes('rate limit')) {
+      return {
+        ok: true, // API key is valid, just quota limited
+        model: 'gemini-2.0-flash',
+        message: 'API key valid but quota limited'
+      };
+    }
+    
     return {
       ok: false,
       model: 'gemini-2.0-flash',

@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
-import { healthCheck } from '@/lib/ai';
 
 export async function GET() {
   try {
-    // Check if required environment variables are set
+    // Always check fresh environment variables
     const githubToken = !!process.env.GITHUB_TOKEN;
     const geminiApiKey = !!process.env.GOOGLE_API_KEY;
 
-    // Get actual AI model status
+    // Get actual AI model status with fresh client
+    const { healthCheck } = await import('@/lib/ai');
     const aiHealth = await healthCheck();
 
     return NextResponse.json({
