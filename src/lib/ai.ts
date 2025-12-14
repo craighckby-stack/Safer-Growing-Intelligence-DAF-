@@ -1,4 +1,4 @@
-import ZAI from 'z-ai-web-dev-sdk';
+import { GoogleGenAI } from '@google/genai';
 
 // Enhanced type definitions
 interface AIRequest {
@@ -39,12 +39,29 @@ Guidelines:
 1. Improve code readability and maintainability
 2. Optimize performance where possible
 3. Add error handling and validation
-4. Follow best practices for the language
+4. Follow best practices for language
 5. Add helpful comments for complex logic
 6. Ensure backwards compatibility
-7. Return ONLY the improved code, no explanations or markdown formatting
+7. Return ONLY improved code, no explanations or markdown formatting
 
-CRITICAL: Output only the raw code without any markdown formatting, code blocks, or explanations.`;
+CRITICAL: Output only raw code without any markdown formatting, code blocks, or explanations.`;
+
+// Initialize Google GenAI client once at module level
+let googleAI: GoogleGenAI | null = null;
+
+/**
+ * Initialize Google GenAI client
+ */
+function getGoogleGenAI(): GoogleGenAI {
+  if (!googleAI) {
+    const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey || apiKey.includes('placeholder') || apiKey === 'AIzaSy_placeholder_key') {
+      throw new Error('Please replace the placeholder Gemini API key with a real key from https://makersuite.google.com/app/apikey');
+    }
+    googleAI = new GoogleGenAI({ apiKey });
+  }
+  return googleAI;
+}
 
 /**
  * Enhanced AI integration with comprehensive error handling and performance optimization
@@ -148,42 +165,47 @@ function buildPrompt(content: string, options: EnhancementOptions): string {
 }
 
 /**
- * Enhanced AI request with better error handling
+ * Enhanced AI request using official Google GenAI SDK
  */
 async function makeAIRequest(config: AIRequest): Promise<any> {
   try {
-    const zai = await ZAI.create();
+    const ai = getGoogleGenAI();
 
-    const completion = await zai.chat.completions.create({
-      messages: [
-        {
-          role: 'system',
-          content: SYSTEM_CONTEXT
-        },
-        {
-          role: 'user',
-          content: config.content
-        }
-      ],
-      temperature: config.temperature || DEFAULT_TEMPERATURE,
-      max_tokens: config.maxTokens || DEFAULT_MAX_TOKENS,
-      model: 'gemini-1.5-flash'
+    const response = await ai.models.generateContent({
+      model: 'gemini-1.5-flash',
+      contents: [{
+        parts: [{
+          text: config.content
+        }]
+      }],
+      config: {
+        systemInstruction: SYSTEM_CONTEXT,
+        temperature: config.temperature || DEFAULT_TEMPERATURE,
+        maxOutputTokens: config.maxTokens || DEFAULT_MAX_TOKENS,
+      }
     });
 
     // Enhanced response validation
-    if (!completion || !completion.choices || completion.choices.length === 0) {
-      throw new Error('Invalid AI response: no choices returned');
+    if (!response || !response.response || !response.response.candidates || response.response.candidates.length === 0) {
+      throw new Error('Invalid AI response: no candidates returned');
     }
 
-    const choice = completion.choices[0];
-    if (!choice.message || !choice.message.content) {
-      throw new Error('Invalid AI response: no message content');
+    const candidate = response.response.candidates[0];
+    if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
+      throw new Error('Invalid AI response: no content returned');
     }
+
+    const content = candidate.content.parts[0].text;
+    const usage = response.usageMetadata;
 
     return {
-      content: choice.message.content,
-      model: completion.model || 'gemini-1.5-flash',
-      usage: completion.usage
+      content: content,
+      model: response.model || 'gemini-1.5-flash',
+      usage: {
+        promptTokens: usage?.promptTokenCount || 0,
+        completionTokens: usage?.candidatesTokenCount || 0,
+        totalTokens: usage?.totalTokenCount || 0,
+      }
     };
   } catch (error) {
     // Enhanced error categorization
@@ -541,42 +563,21 @@ export function generateEnhancementSummary(originalCode: string, enhancedCode: s
     improvements.push('Added or modified classes');
   }
   
-  // Performance improvements
-  if (enhancedCode.includes('async') && !originalCode.includes('async')) {
-    improvements.push('Added async/await for performance');
-  }
-  
-  if (enhancedCode.includes('Promise') && !originalCode.includes('Promise')) {
-    improvements.push('Added Promise-based handling');
-  }
-  
-  // File-specific improvements
-  const fileExtension = filePath.split('.').pop()?.toLowerCase();
-  
-  if (fileExtension === 'json' && enhancedCode.includes('schema')) {
-    improvements.push('Added JSON schema validation');
-  }
-  
-  if (fileExtension === 'css' && enhancedCode.includes(':root')) {
-    improvements.push('Added CSS custom properties');
-  }
-  
-  return improvements.length > 0 ? improvements.join(', ') : 'General improvements';
+  return improvements.join(', ');
 }
 
 /**
  * Enhanced batch processing for multiple files
  */
-export async function enhanceMultipleFiles(
+export async function processMultipleFiles(
   files: Array<{ path: string; content: string }>,
   options: EnhancementOptions = {}
-): Promise<Array<{ path: string; success: boolean; enhanced: boolean; reason?: string }>> {
+): Promise<Array<{ path: string; success: boolean; enhanced: boolean; reason?: string; error?: string }>> {
   const results = [];
+  const batchSize = 5; // Process 5 files at a time to avoid overwhelming AI
   
-  // Process files in parallel batches for better performance
-  const batchSize = 5;
+  // Create batches
   const batches = [];
-  
   for (let i = 0; i < files.length; i += batchSize) {
     batches.push(files.slice(i, i + batchSize));
   }
@@ -608,7 +609,7 @@ export async function enhanceMultipleFiles(
           path: file.path,
           success: false,
           enhanced: false,
-          reason: error instanceof Error ? error.message : 'Unknown error'
+          error: error instanceof Error ? error.message : 'Unknown error'
         };
       }
     });
@@ -616,7 +617,7 @@ export async function enhanceMultipleFiles(
     const batchResults = await Promise.all(batchPromises);
     results.push(...batchResults);
     
-    // Small delay between batches to avoid overwhelming the AI
+    // Small delay between batches to avoid overwhelming AI
     if (batches.indexOf(batch) < batches.length - 1) {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }

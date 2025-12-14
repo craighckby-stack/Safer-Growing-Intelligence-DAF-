@@ -1,549 +1,313 @@
+/**
+ * Clean, configurable GitHubService
+ *
+ * - Accepts credentials and repository defaults via a single options object.
+ * - Each public method accepts optional overrides for owner/repo/branch so caller
+ *   can either rely on defaults or specify per-call values.
+ * - Centralized request retry/backoff wrapper used for all API calls.
+ * - Clear error messages and minimal side-effects (cache is optional).
+ *
+ * Usage:
+ *   const svc = new GitHubService({ token: process.env.GITHUB_TOKEN, owner: 'me', repo: 'my-repo' });
+ *   await svc.listFilesRecursive(); // uses defaults
+ *   await svc.updateFile('path/to.md', 'new content', { message: 'update' }); // uses defaults
+ */
+
 import { Octokit } from '@octokit/rest';
 
-// Enhanced type definitions
-interface GitHubFile {
+export interface GitHubServiceOptions {
+  token?: string;                     // GitHub PAT; will fall back to process.env.GITHUB_TOKEN
+  owner?: string;                     // default owner (user/org) for operations
+  repo?: string;                      // default repo for operations
+  branch?: string;                    // default branch (e.g. 'main')
+  userAgent?: string;                 // user agent string
+  maxFileSize?: number;               // bytes; default 100KB
+  retryAttempts?: number;             // default 3
+  retryDelayBaseMs?: number;          // base backoff delay ms; default 1000
+  enableCache?: boolean;              // default true
+  cacheTtlMs?: number;                // cache TTL for content/files, default 2-5 minutes
+}
+
+export interface GitHubFile {
   path: string;
   sha: string;
   size?: number;
-  type: 'file' | 'dir';
-  content?: string;
+  type: 'file' | 'dir' | string;
 }
 
-interface GitHubContent {
+export interface GitHubContent {
   content: string;
   sha: string;
   size: number;
 }
 
-interface GitHubBranch {
-  name: string;
-  commit: {
-    sha: string;
-    url: string;
-  };
-  protected: boolean;
-}
-
-interface GitHubPullRequest {
-  number: number;
-  html_url: string;
-  state: string;
-  title: string;
-  body: string;
-  head: {
-    ref: string;
-  };
-  base: {
-    ref: string;
-  };
-}
-
-interface RepositoryStats {
-  totalFiles: number;
-  processedFiles: number;
-  enhancedFiles: number;
-  skippedFiles: number;
-  errorFiles: number;
-  processingTime: number;
-}
-
-// Constants for better maintainability
-const MAX_FILE_SIZE = 100000; // 100KB
-const MAX_FILES_PER_REQUEST = 100;
-const DEFAULT_BRANCH = 'main';
-const RETRY_ATTEMPTS = 3;
-const RETRY_DELAY_BASE = 1000; // ms
-
-/**
- * Enhanced GitHub service with comprehensive error handling and performance optimization
- */
 export class GitHubService {
   private octokit: Octokit;
-  private requestCache: Map<string, any> = new Map();
-  private rateLimitResetTime: number = 0;
-  private consecutiveErrors: number = 0;
+  private readonly defaults: Required<Pick<GitHubServiceOptions, 'owner' | 'repo' | 'branch' | 'userAgent' | 'maxFileSize' | 'retryAttempts' | 'retryDelayBaseMs' | 'enableCache' | 'cacheTtlMs'>>;
+  private requestCache: Map<string, { value: any; expiresAt: number }> = new Map();
+  private consecutiveErrors = 0;
 
-  constructor() {
-    if (!process.env.GITHUB_TOKEN) {
-      throw new Error('GITHUB_TOKEN environment variable is not set');
+  constructor(options: GitHubServiceOptions = {}) {
+    const token = options.token ?? process.env.GITHUB_TOKEN;
+    if (!token) throw new Error('GitHub token is required — pass token in options or set GITHUB_TOKEN env var');
+
+    // Check for placeholder token
+    if (token.includes('placeholder') || token === 'ghp_placeholder_token') {
+      throw new Error('Please replace the placeholder GitHub token with a real token from https://github.com/settings/tokens');
     }
 
-    this.octokit = new Octokit({ 
-      auth: process.env.GITHUB_TOKEN,
-      throttle: {
-        onRateLimit: (retryAfter: number, options: any) => {
-          console.warn(`GitHub rate limit hit, retrying after ${retryAfter}s`);
-          this.rateLimitResetTime = Date.now() + (retryAfter * 1000);
-          return true;
-        },
-        onSecondaryRateLimit: (retryAfter: number, options: any) => {
-          console.warn(`GitHub secondary rate limit hit, retrying after ${retryAfter}s`);
-          return true;
-        }
-      },
+    const owner = options.owner ?? '';
+    const repo = options.repo ?? '';
+    const branch = options.branch ?? 'main';
+
+    // sensible defaults
+    this.defaults = {
+      owner,
+      repo,
+      branch,
+      userAgent: options.userAgent ?? 'GitHubService/1.0',
+      maxFileSize: options.maxFileSize ?? 100_000,
+      retryAttempts: options.retryAttempts ?? 3,
+      retryDelayBaseMs: options.retryDelayBaseMs ?? 1000,
+      enableCache: options.enableCache ?? true,
+      cacheTtlMs: options.cacheTtlMs ?? 2 * 60 * 1000
+    };
+
+    this.octokit = new Octokit({
+      auth: token,
+      userAgent: this.defaults.userAgent,
       request: {
-        agent: 'AI-Autonomous-Enhancer/1.0.0',
-        headers: {
-          'X-GitHub-Api-Version': '2022-11-28'
-        }
+        // headers common to all requests
+        headers: { 'X-GitHub-Api-Version': '2022-11-28' }
       }
     });
   }
 
-  /**
-   * Enhanced repository file listing with better error handling and caching
-   */
-  async listFilesRecursive(owner: string, repo: string, dir: string = '', branch: string = DEFAULT_BRANCH): Promise<GitHubFile[]> {
-    const cacheKey = `files:${owner}:${repo}:${branch}:${dir}`;
-    
-    // Check cache first
-    if (this.requestCache.has(cacheKey)) {
-      return this.requestCache.get(cacheKey);
-    }
-
-    try {
-      const files: GitHubFile[] = [];
-      const processedDirs = new Set<string>();
-      
-      await this.processDirectory(owner, repo, dir, branch, files, processedDirs);
-      
-      // Cache the result
-      this.requestCache.set(cacheKey, files);
-      
-      // Set cache expiration (5 minutes)
-      setTimeout(() => {
-        this.requestCache.delete(cacheKey);
-      }, 5 * 60 * 1000);
-      
-      return files;
-    } catch (error) {
-      this.consecutiveErrors++;
-      console.error(`Error listing files in ${dir}:`, error instanceof Error ? error.message : 'Unknown error');
-      
-      if (this.consecutiveErrors >= RETRY_ATTEMPTS) {
-        throw new Error(`Failed to list files after ${RETRY_ATTEMPTS} consecutive attempts`);
-      }
-      
-      // Enhanced retry logic
-      if (error instanceof Error && error.message.includes('rate limit')) {
-        const waitTime = this.rateLimitResetTime - Date.now();
-        if (waitTime > 0) {
-          console.log(`Waiting ${Math.ceil(waitTime / 1000)}s for rate limit reset...`);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
-        }
-      }
-      
-      throw new Error(`Failed to list repository files: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+  // ---- utility helpers ----
+  private makeCacheKey(prefix: string, parts: Array<string | undefined | null>) {
+    return `${prefix}:${parts.map(p => (p ?? '')).join(':')}`;
   }
 
-  /**
-   * Enhanced directory processing with better performance
-   */
-  private async processDirectory(
-    owner: string, 
-    repo: string, 
-    dir: string, 
-    branch: string, 
-    files: GitHubFile[], 
-    processedDirs: Set<string>
-  ): Promise<void> {
-    try {
-      const res = await this.octokit.rest.repos.getContent({ 
-        owner, 
-        repo, 
-        path: dir, 
-        ref: branch 
-      });
-
-      const items = Array.isArray(res.data) ? res.data : [res.data];
-      
-      for (const item of items) {
-        if (item.type === 'file') {
-          files.push({ 
-            path: item.path, 
-            sha: item.sha, 
-            size: item.size || 0,
-            type: 'file'
-          });
-        } else if (item.type === 'dir') {
-          if (!processedDirs.has(item.path)) {
-            processedDirs.add(item.path);
-            await this.processDirectory(owner, repo, item.path, branch, files, processedDirs);
-          }
-        }
-      }
-    } catch (error) {
-      throw new Error(`Failed to process directory ${dir}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  private getFromCache<T>(key: string): T | undefined {
+    if (!this.defaults.enableCache) return undefined;
+    const item = this.requestCache.get(key);
+    if (!item) return undefined;
+    if (Date.now() > item.expiresAt) {
+      this.requestCache.delete(key);
+      return undefined;
     }
+    return item.value;
   }
 
-  /**
-   * Enhanced file content retrieval with better error handling
-   */
-  async getFileContent(owner: string, repo: string, path: string, branch: string = DEFAULT_BRANCH): Promise<GitHubContent> {
-    const cacheKey = `content:${owner}:${repo}:${branch}:${path}`;
-    
-    // Check cache first
-    if (this.requestCache.has(cacheKey)) {
-      return this.requestCache.get(cacheKey);
-    }
-
-    try {
-      const res = await this.octokit.rest.repos.getContent({ 
-        owner, 
-        repo, 
-        path: path, 
-        ref: branch 
-      });
-
-      if ('content' in res.data && 'sha' in res.data) {
-        const content: GitHubContent = {
-          content: Buffer.from(res.data.content, 'base64').toString('utf-8'),
-          sha: res.data.sha,
-          size: res.data.size || 0
-        };
-
-        // Cache the result
-        this.requestCache.set(cacheKey, content);
-        
-        // Set cache expiration (2 minutes)
-        setTimeout(() => {
-          this.requestCache.delete(cacheKey);
-        }, 2 * 60 * 1000);
-
-        return content;
-      }
-
-      throw new Error('Invalid file response from GitHub API');
-    } catch (error) {
-      this.consecutiveErrors++;
-      console.error(`Error getting file content for ${path}:`, error instanceof Error ? error.message : 'Unknown error');
-      
-      if (this.consecutiveErrors >= RETRY_ATTEMPTS) {
-        throw new Error(`Failed to get file content after ${RETRY_ATTEMPTS} consecutive attempts`);
-      }
-      
-      throw new Error(`Failed to get file content: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+  private setCache(key: string, value: any, ttlMs?: number) {
+    if (!this.defaults.enableCache) return;
+    const expiresAt = Date.now() + (ttlMs ?? this.defaults.cacheTtlMs);
+    this.requestCache.set(key, { value, expiresAt });
   }
 
-  /**
-   * Enhanced file update with better validation and error handling
-   */
-  async updateFile(
-    owner: string, 
-    repo: string, 
-    branch: string, 
-    path: string, 
-    content: string, 
-    sha: string,
-    message: string
-  ): Promise<void> {
-    try {
-      // Enhanced content validation
-      if (!content || typeof content !== 'string') {
-        throw new Error('Invalid content provided for file update');
-      }
-
-      if (content.length > MAX_FILE_SIZE * 2) {
-        console.warn(`File content is large (${content.length} bytes), this may fail`);
-      }
-
-      // Enhanced file size check
-      const originalContent = await this.getFileContent(owner, repo, path, branch);
-      if (originalContent.size > MAX_FILE_SIZE) {
-        throw new Error(`File too large for enhancement (${originalContent.size} bytes > ${MAX_FILE_SIZE} bytes)`);
-      }
-
-      await this.octokit.rest.repos.createOrUpdateFileContents({
-        owner,
-        repo,
-        branch,
-        path,
-        message: `[AI Enhancement] ${message}`,
-        content: Buffer.from(content).toString('base64'),
-        sha
-      });
-
-      // Invalidate cache for this file
-      const cacheKey = `content:${owner}:${repo}:${branch}:${path}`;
-      this.requestCache.delete(cacheKey);
-      
-      this.consecutiveErrors = 0; // Reset on success
-      
-    } catch (error) {
-      this.consecutiveErrors++;
-      console.error(`Error updating file ${path}:`, error instanceof Error ? error.message : 'Unknown error');
-      
-      if (this.consecutiveErrors >= RETRY_ATTEMPTS) {
-        throw new Error(`Failed to update file after ${RETRY_ATTEMPTS} consecutive attempts`);
-      }
-      
-      throw new Error(`Failed to update file: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+  private deleteCache(key: string) {
+    this.requestCache.delete(key);
   }
 
-  /**
-   * Enhanced branch management with better error handling
-   */
-  async ensureBranch(owner: string, repo: string, branch: string, base: string = DEFAULT_BRANCH): Promise<{ exists: boolean; created?: boolean }> {
-    try {
-      await this.octokit.rest.git.getRef({ 
-        owner, 
-        repo, 
-        ref: `heads/${branch}` 
-      });
-      
-      return { exists: true };
-    } catch (error: any) {
-      if (error.status === 404) {
-        try {
-          // Get base branch reference
-          const baseRef = await this.octokit.rest.git.getRef({ 
-            owner, 
-            repo, 
-            ref: `heads/${base}` 
-          });
-
-          await this.octokit.rest.git.createRef({ 
-            owner, 
-            repo, 
-            ref: `refs/heads/${branch}`, 
-            sha: baseRef.data.object.sha 
-          });
-
-          return { exists: false, created: true };
-        } catch (createError) {
-          throw new Error(`Failed to create branch: ${createError instanceof Error ? createError.message : 'Unknown error'}`);
-        }
-      }
-      
-      throw new Error(`Failed to check branch: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  /**
-   * Enhanced pull request creation with better validation
-   */
-  async createPullRequest(
-    owner: string,
-    repo: string,
-    title: string,
-    body: string,
-    head: string,
-    base: string
-  ): Promise<{ number: number; html_url: string }> {
-    try {
-      // Enhanced validation
-      if (!title || title.trim().length === 0) {
-        throw new Error('Pull request title is required');
-      }
-
-      if (!body || body.trim().length === 0) {
-        throw new Error('Pull request body is required');
-      }
-
-      if (!head || !base) {
-        throw new Error('Both head and base branches are required');
-      }
-
-      const pr = await this.octokit.rest.pulls.create({
-        owner,
-        repo,
-        title: `[AI Enhancement] ${title}`,
-        body,
-        head,
-        base,
-        draft: false // Ensure it's not a draft
-      });
-
-      this.consecutiveErrors = 0; // Reset on success
-      
-      return {
-        number: pr.data.number,
-        html_url: pr.data.html_url
-      };
-    } catch (error) {
-      this.consecutiveErrors++;
-      console.error('Error creating pull request:', error instanceof Error ? error.message : 'Unknown error');
-      
-      if (this.consecutiveErrors >= RETRY_ATTEMPTS) {
-        throw new Error(`Failed to create pull request after ${RETRY_ATTEMPTS} consecutive attempts`);
-      }
-      
-      throw new Error(`Failed to create pull request: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  /**
-   * Enhanced repository validation
-   */
-  async validateRepository(owner: string, repo: string): Promise<boolean> {
-    try {
-      await this.octokit.rest.repos.get({ owner, repo });
-      this.consecutiveErrors = 0; // Reset on successful validation
-      return true;
-    } catch (error: any) {
-      if (error.status === 404) {
-        return false;
-      }
-      
-      this.consecutiveErrors++;
-      console.error('Error validating repository:', error instanceof Error ? error.message : 'Unknown error');
-      
-      if (this.consecutiveErrors >= RETRY_ATTEMPTS) {
-        throw new Error(`Failed to validate repository after ${RETRY_ATTEMPTS} consecutive attempts`);
-      }
-      
-      throw new Error(`Repository validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  /**
-   * Enhanced repository information retrieval
-   */
-  async getRepository(owner: string, repo: string) {
-    try {
-      const res = await this.octokit.rest.repos.get({ owner, repo });
-      this.consecutiveErrors = 0; // Reset on success
-      return res.data;
-    } catch (error) {
-      this.consecutiveErrors++;
-      console.error('Error getting repository info:', error instanceof Error ? error.message : 'Unknown error');
-      
-      if (this.consecutiveErrors >= RETRY_ATTEMPTS) {
-        throw new Error(`Failed to get repository info after ${RETRY_ATTEMPTS} consecutive attempts`);
-      }
-      
-      throw new Error(`Failed to get repository: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  /**
-   * Enhanced batch file processing for better performance
-   */
-  async processMultipleFiles(
-    owner: string,
-    repo: string,
-    branch: string,
-    files: GitHubFile[],
-    processor: (file: GitHubFile) => Promise<any>
-  ): Promise<any[]> {
-    const results = [];
-    const startTime = Date.now();
-    
-    // Process files in batches to avoid overwhelming GitHub
-    const batches = [];
-    for (let i = 0; i < files.length; i += MAX_FILES_PER_REQUEST) {
-      batches.push(files.slice(i, i + MAX_FILES_PER_REQUEST));
-    }
-    
-    for (let i = 0; i < batches.length; i++) {
-      const batch = batches[i];
-      const batchPromises = batch.map(file => processor(file));
-      
+  private async retryWithBackoff<T>(op: () => Promise<T>, attempts = this.defaults.retryAttempts, baseMs = this.defaults.retryDelayBaseMs): Promise<T> {
+    let lastError: any = new Error('unknown');
+    for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
-        const batchResults = await Promise.all(batchPromises);
-        results.push(...batchResults);
-        
-        // Small delay between batches to respect rate limits
-        if (i < batches.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+        const res = await op();
+        this.consecutiveErrors = 0;
+        return res;
+      } catch (err: any) {
+        lastError = err;
+        this.consecutiveErrors++;
+        // best-effort simple rate-limit detection
+        const msg = (err?.message ?? '').toString().toLowerCase();
+        if (msg.includes('rate limit') || msg.includes('secondary rate limit')) {
+          // wait an exponential backoff (caller can also use plugins for better handling)
         }
-      } catch (error) {
-        console.error(`Batch ${i + 1} failed:`, error instanceof Error ? error.message : 'Unknown error');
-        
-        // Add error results for failed files
-        const errorResults = batch.map(file => ({
-          path: file.path,
-          error: error instanceof Error ? error.message : 'Unknown error',
-          success: false
-        }));
-        results.push(...errorResults);
-      }
-    }
-    
-    const processingTime = Date.now() - startTime;
-    console.log(`Processed ${files.length} files in ${processingTime}ms`);
-    
-    return results;
-  }
-
-  /**
-   * Enhanced statistics and monitoring
-   */
-  getStats(): RepositoryStats {
-    return {
-      totalFiles: this.requestCache.size,
-      processedFiles: this.consecutiveErrors,
-      enhancedFiles: 0, // This would be tracked during actual processing
-      skippedFiles: 0,
-      errorFiles: this.consecutiveErrors,
-      processingTime: 0
-    };
-  }
-
-  /**
-   * Enhanced cache management
-   */
-  clearCache(): void {
-    this.requestCache.clear();
-    console.log('GitHub service cache cleared');
-  }
-
-  /**
-   * Enhanced health check
-   */
-  async healthCheck(): Promise<{ status: string; github: boolean; gemini: boolean; configured: boolean }> {
-    try {
-      // Test GitHub connectivity
-      const testRepo = await this.octokit.rest.repos.get({ owner: 'darlekkhan', repo: 'example-repo' })
-        .then(() => true)
-        .catch(() => false);
-      
-      return {
-        status: 'ok',
-        github: testRepo,
-        gemini: !!process.env.GOOGLE_API_KEY,
-        configured: testRepo && !!process.env.GOOGLE_API_KEY
-      };
-    } catch (error) {
-      return {
-        status: 'error',
-        github: false,
-        gemini: !!process.env.GOOGLE_API_KEY,
-        configured: false
-      };
-    }
-  }
-
-  /**
-   * Enhanced error recovery
-   */
-  async retryWithBackoff<T>(
-    operation: () => Promise<T>,
-    maxAttempts: number = RETRY_ATTEMPTS,
-    baseDelay: number = RETRY_DELAY_BASE
-  ): Promise<T> {
-    let lastError: Error;
-    
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const result = await operation();
-        this.consecutiveErrors = 0; // Reset on success
-        return result;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error('Unknown error');
-        
-        if (attempt < maxAttempts) {
-          const delay = baseDelay * Math.pow(2, attempt - 1);
-          console.warn(`Attempt ${attempt} failed, retrying in ${delay}ms:`, lastError.message);
-          await new Promise(resolve => setTimeout(resolve, delay));
+        if (attempt < attempts) {
+          const delay = baseMs * Math.pow(2, attempt - 1);
+          await new Promise(r => setTimeout(r, delay));
         }
       }
     }
-    
     throw lastError;
+  }
+
+  // Resolve owner/repo/branch for a call (use provided overrides or defaults).
+  private resolveRepoParams(owner?: string, repo?: string, branch?: string) {
+    const o = owner ?? this.defaults.owner;
+    const r = repo ?? this.defaults.repo;
+    const b = branch ?? this.defaults.branch;
+    if (!o) throw new Error('Repository owner is not set. Provide owner in constructor options or as a method argument.');
+    if (!r) throw new Error('Repository name is not set. Provide repo in constructor options or as a method argument.');
+    return { owner: o, repo: r, branch: b };
+  }
+
+  // ---- public API ----
+
+  // List files recursively from a directory (default root). Uses GitHub "getContent" and recurses.
+  async listFilesRecursive(owner?: string, repo?: string, dir = '', branch?: string): Promise<GitHubFile[]> {
+    const params = this.resolveRepoParams(owner, repo, branch);
+    const cacheKey = this.makeCacheKey('files', [params.owner, params.repo, params.branch, dir || '/']);
+    const cached = this.getFromCache<GitHubFile[]>(cacheKey);
+    if (cached) return cached;
+
+    const result: GitHubFile[] = [];
+    const visited = new Set<string>();
+
+    const walk = async (path: string) => {
+      const callParams: any = { owner: params.owner, repo: params.repo, ref: params.branch };
+      if (path && path.trim().length > 0) callParams.path = path;
+
+      const res = await this.retryWithBackoff(() => this.octokit.rest.repos.getContent(callParams));
+      const items = Array.isArray(res.data) ? res.data : [res.data];
+
+      for (const item of items) {
+        if (!item || !item.type) continue;
+        if (item.type === 'file') {
+          result.push({ path: item.path, sha: item.sha, size: item.size ?? 0, type: 'file' });
+        } else if (item.type === 'dir') {
+          if (!visited.has(item.path)) {
+            visited.add(item.path);
+            await walk(item.path);
+          }
+        } else {
+          // ignore other types (symlink/submodule)
+        }
+      }
+    };
+
+    await walk(dir);
+
+    this.setCache(cacheKey, result);
+    return result;
+  }
+
+  // Get file content (decoded). Throws if path is a directory.
+  async getFileContent(path: string, owner?: string, repo?: string, branch?: string): Promise<GitHubContent> {
+    if (!path) throw new Error('path is required');
+    const params = this.resolveRepoParams(owner, repo, branch);
+    const cacheKey = this.makeCacheKey('content', [params.owner, params.repo, params.branch, path]);
+    const cached = this.getFromCache<GitHubContent>(cacheKey);
+    if (cached) return cached;
+
+    const res: any = await this.retryWithBackoff(() =>
+      this.octokit.rest.repos.getContent({ owner: params.owner, repo: params.repo, path, ref: params.branch })
+    );
+
+    if (Array.isArray(res.data)) {
+      throw new Error(`Requested path "${path}" is a directory, not a file`);
+    }
+    if (!('content' in res.data) || !('sha' in res.data)) {
+      throw new Error(`Unexpected response when fetching content for "${path}"`);
+    }
+
+    const decoded = Buffer.from(res.data.content, 'base64').toString('utf8');
+    const content: GitHubContent = { content: decoded, sha: res.data.sha, size: res.data.size ?? decoded.length };
+    this.setCache(cacheKey, content);
+    return content;
+  }
+
+  // Update or create a file. If sha is omitted and the file exists, method will read the file to obtain sha.
+  // options.message optional commit message (defaults)
+  async updateFile(path: string, content: string, opts?: { owner?: string; repo?: string; branch?: string; sha?: string; message?: string; }): Promise<{ committedSha: string }> {
+    if (!path) throw new Error('path is required');
+    if (typeof content !== 'string') throw new Error('content must be a string');
+
+    const { owner, repo, branch } = this.resolveRepoParams(opts?.owner, opts?.repo, opts?.branch);
+    let sha = opts?.sha;
+
+    // If no SHA provided, try to read the file to update (if exists). If 404, create new file.
+    if (!sha) {
+      try {
+        const current = await this.getFileContent(path, owner, repo, branch);
+        sha = current.sha;
+        if (current.size > this.defaults.maxFileSize) {
+          throw new Error(`File too large (${current.size} bytes > ${this.defaults.maxFileSize})`);
+        }
+      } catch (err: any) {
+        const msg = (err?.message ?? '').toString().toLowerCase();
+        if (!msg.includes('not found') && !msg.includes('404')) {
+          throw err; // rethrow unexpected errors
+        }
+        // else file not found -> we will create new file (sha stays undefined)
+      }
+    }
+
+    const params: any = {
+      owner,
+      repo,
+      path,
+      message: opts?.message ?? `[GitHubService] update ${path}`,
+      content: Buffer.from(content, 'utf8').toString('base64'),
+      branch
+    };
+    if (sha) params.sha = sha;
+
+    const res: any = await this.retryWithBackoff(() => this.octokit.rest.repos.createOrUpdateFileContents(params));
+    // invalidate cache for the file
+    const cacheKey = this.makeCacheKey('content', [owner, repo, branch, path]);
+    this.deleteCache(cacheKey);
+
+    const committedSha = res?.data?.content?.sha ?? res?.data?.commit?.sha;
+    if (!committedSha) throw new Error('Failed to determine committed SHA after update');
+    return { committedSha };
+  }
+
+  // Create a branch from base (or return if exists)
+  async ensureBranch(branch: string, opts?: { owner?: string; repo?: string; base?: string; }): Promise<{ created: boolean; branch: string }> {
+    if (!branch) throw new Error('branch is required');
+    const { owner, repo } = this.resolveRepoParams(opts?.owner, opts?.repo, undefined);
+    const base = opts?.base ?? this.defaults.branch;
+
+    try {
+      await this.retryWithBackoff(() => this.octokit.rest.git.getRef({ owner, repo, ref: `heads/${branch}` }));
+      return { created: false, branch };
+    } catch (err: any) {
+      const status = err?.status ?? undefined;
+      if (status !== 404) throw err;
+
+      // read base sha and create
+      const baseRef: any = await this.retryWithBackoff(() => this.octokit.rest.git.getRef({ owner, repo, ref: `heads/${base}` }));
+      const sha = baseRef?.data?.object?.sha;
+      if (!sha) throw new Error(`Could not resolve SHA for base branch "${base}"`);
+      await this.retryWithBackoff(() => this.octokit.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha }));
+      return { created: true, branch };
+    }
+  }
+
+  // Create a PR. head can be branch name or "owner:branch" (fork)
+  async createPullRequest(params: { title: string; body: string; head: string; base?: string; owner?: string; repo?: string; draft?: boolean; }) {
+    const { owner, repo } = this.resolveRepoParams(params.owner, params.repo, undefined);
+    if (!params.title || !params.body) throw new Error('title and body are required for PR creation');
+    const base = params.base ?? this.defaults.branch;
+
+    const res: any = await this.retryWithBackoff(() =>
+      this.octokit.rest.pulls.create({
+        owner,
+        repo,
+        title: `[GitHubService] ${params.title}`,
+        body: params.body,
+        head: params.head,
+        base,
+        draft: !!params.draft
+      })
+    );
+
+    return { number: res.data.number, url: res.data.html_url };
+  }
+
+  // Simple health check using authenticated user
+  async healthCheck(): Promise<{ ok: boolean; user?: string; message?: string }> {
+    try {
+      const res: any = await this.retryWithBackoff(() => this.octokit.rest.users.getAuthenticated());
+      return { ok: true, user: res.data?.login };
+    } catch (err: any) {
+      return { ok: false, message: err?.message ?? String(err) };
+    }
+  }
+
+  clearCache() {
+    this.requestCache.clear();
   }
 }

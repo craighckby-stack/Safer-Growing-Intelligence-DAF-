@@ -49,21 +49,30 @@ const SSE_KEEPALIVE_INTERVAL = 30000; // 30 seconds
 /**
  * Enhanced SSE message helper with better error handling
  */
-function sendSSEMessage(controller: ReadableStreamDefaultController, data: SSEMessage): void {
+function sendSSEMessage(controller: ReadableStreamDefaultController, data: SSEMessage): boolean {
   try {
+    // Check if controller is still open
+    if (controller.signal.aborted) {
+      return false;
+    }
+    
     const message = `data: ${JSON.stringify(data)}\n\n`;
     controller.enqueue(new TextEncoder().encode(message));
+    return true;
   } catch (error) {
     console.error('Error sending SSE message:', error);
-    // Try to send error message
-    try {
-      sendSSEMessage(controller, {
-        type: 'error',
-        message: `Internal error: ${error instanceof Error ? error.message : 'Unknown error'}`
-      });
-    } catch (sseError) {
-      console.error('Failed to send error SSE message:', sseError);
-    }
+    // Don't try to send error message recursively to avoid infinite loops
+    return false;
+  }
+}
+
+/**
+ * Safe SSE message sender that handles controller state
+ */
+function safeSendSSE(controller: ReadableStreamDefaultController, data: SSEMessage): void {
+  if (!sendSSEMessage(controller, data)) {
+    // Controller is closed, stop processing
+    return;
   }
 }
 
@@ -87,7 +96,7 @@ async function enhanceAndPushFile(
         reason: 'Binary file skipped',
         status: 'skipped'
       };
-      sendSSEMessage(controller, {
+      safeSendSSE(controller, {
         type: 'info',
         message: `⊘ Skipped ${file.path}: ${result.reason}`
       });
@@ -102,7 +111,7 @@ async function enhanceAndPushFile(
         reason: `File too large (${(file.size/1024).toFixed(2)}KB)`,
         status: 'skipped'
       };
-      sendSSEMessage(controller, {
+      safeSendSSE(controller, {
         type: 'info',
         message: `⊘ Skipped ${file.path}: ${result.reason}`
       });
@@ -120,7 +129,7 @@ async function enhanceAndPushFile(
         reason: error instanceof Error ? error.message : 'Failed to retrieve file content',
         status: 'error'
       };
-      sendSSEMessage(controller, {
+      safeSendSSE(controller, {
         type: 'error',
         message: `✗ Failed to retrieve ${file.path}: ${result.reason}`
       });
@@ -135,7 +144,7 @@ async function enhanceAndPushFile(
         reason: 'Empty file',
         status: 'skipped'
       };
-      sendSSEMessage(controller, {
+      safeSendSSE(controller, {
         type: 'info',
         message: `⊘ Skipped ${file.path}: ${result.reason}`
       });
@@ -151,7 +160,7 @@ async function enhanceAndPushFile(
         reason: shouldEnhance.reason,
         status: 'skipped'
       };
-      sendSSEMessage(controller, {
+      safeSendSSE(controller, {
         type: 'info',
         message: `⊘ Skipped ${file.path}: ${result.reason}`
       });
@@ -177,7 +186,7 @@ async function enhanceAndPushFile(
         reason: error instanceof Error ? error.message : 'AI enhancement failed',
         status: 'error'
       };
-      sendSSEMessage(controller, {
+      safeSendSSE(controller, {
         type: 'error',
         message: `✗ AI enhancement failed for ${file.path}: ${result.reason}`
       });
@@ -192,7 +201,7 @@ async function enhanceAndPushFile(
         reason: 'AI response too short or empty',
         status: 'error'
       };
-      sendSSEMessage(controller, {
+      safeSendSSE(controller, {
         type: 'error',
         message: `✗ Invalid AI response for ${file.path}: ${result.reason}`
       });
@@ -207,7 +216,7 @@ async function enhanceAndPushFile(
         reason: 'No improvements needed',
         status: 'unchanged'
       };
-      sendSSEMessage(controller, {
+      safeSendSSE(controller, {
         type: 'info',
         message: `⊘ No changes needed for ${file.path}`
       });
@@ -234,7 +243,7 @@ async function enhanceAndPushFile(
         afterSize: enhancedContent.length
       };
 
-      sendSSEMessage(controller, {
+      safeSendSSE(controller, {
         type: 'success',
         message: `✓ Enhanced ${file.path}`
       });
@@ -247,7 +256,7 @@ async function enhanceAndPushFile(
         reason: error instanceof Error ? error.message : 'Failed to update file',
         status: 'error'
       };
-      sendSSEMessage(controller, {
+      safeSendSSE(controller, {
         type: 'error',
         message: `✗ Failed to update ${file.path}: ${result.reason}`
       });
@@ -261,7 +270,7 @@ async function enhanceAndPushFile(
       reason: error instanceof Error ? error.message : 'Unexpected error during file processing',
       status: 'error'
     };
-    sendSSEMessage(controller, {
+    safeSendSSE(controller, {
       type: 'error',
       message: `✗ Unexpected error processing ${file.path}: ${result.reason}`
     });
@@ -300,6 +309,23 @@ export async function GET(request: NextRequest) {
     // Create enhanced readable stream for SSE
     const stream = new ReadableStream({
       async start(controller) {
+        // Send initial connection message immediately
+        safeSendSSE(controller, {
+          type: 'info',
+          message: '🔗 SSE connection established - Starting enhancement cycle...'
+        });
+
+        // Set a timeout to prevent hanging connections
+        const timeoutId = setTimeout(() => {
+          if (!controller.signal.aborted) {
+            safeSendSSE(controller, {
+              type: 'error',
+              message: 'Connection timeout - please try again'
+            });
+            controller.close();
+          }
+        }, 300000); // 5 minutes timeout
+
         const stats: EnhancementStats = {
           enhanced: 0,
           skipped: 0,
@@ -309,17 +335,27 @@ export async function GET(request: NextRequest) {
         };
 
         try {
-          sendSSEMessage(controller, {
+          safeSendSSE(controller, {
             type: 'info',
             message: `🚀 Starting cycle ${cycleNumber} on base branch: ${baseBranch}`
           });
 
-          const githubService = new GitHubService();
+          let githubService;
+          try {
+            githubService = new GitHubService();
+          } catch (authError) {
+            safeSendSSE(controller, {
+              type: 'error',
+              message: `❌ Authentication failed: ${authError instanceof Error ? authError.message : 'Invalid API credentials'}`
+            });
+            controller.close();
+            return;
+          }
 
           // Enhanced repository validation
           const isValidRepo = await githubService.validateRepository(owner, repo);
           if (!isValidRepo) {
-            sendSSEMessage(controller, {
+            safeSendSSE(controller, {
               type: 'error',
               message: `❌ Repository ${owner}/${repo} not found or not accessible`
             });
@@ -332,19 +368,19 @@ export async function GET(request: NextRequest) {
           const branchResult = await githubService.ensureBranch(owner, repo, newBranch, baseBranch);
           
           if (branchResult.created) {
-            sendSSEMessage(controller, {
+            safeSendSSE(controller, {
               type: 'success',
               message: `✓ Created branch: ${newBranch}`
             });
           } else {
-            sendSSEMessage(controller, {
+            safeSendSSE(controller, {
               type: 'info',
               message: `✓ Using existing branch: ${newBranch}`
             });
           }
 
           // Enhanced file listing with better error handling
-          sendSSEMessage(controller, {
+          safeSendSSE(controller, {
             type: 'info',
             message: '📂 Scanning repository files...'
           });
@@ -352,7 +388,7 @@ export async function GET(request: NextRequest) {
           const files = await githubService.listFilesRecursive(owner, repo, '', baseBranch);
           stats.total = files.length;
           
-          sendSSEMessage(controller, {
+          safeSendSSE(controller, {
             type: 'info',
             message: `Found ${files.length} files to process`
           });
@@ -364,7 +400,7 @@ export async function GET(request: NextRequest) {
             const file = files[i];
             
             // Send progress update
-            sendSSEMessage(controller, {
+            safeSendSSE(controller, {
               type: 'progress',
               progress: {
                 current: i + 1,
@@ -392,7 +428,7 @@ export async function GET(request: NextRequest) {
               
               // Enhanced error recovery
               if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                sendSSEMessage(controller, {
+                safeSendSSE(controller, {
                   type: 'error',
                   message: `⚠️ Too many consecutive errors (${consecutiveErrors}). Stopping enhancement process.`
                 });
@@ -404,7 +440,7 @@ export async function GET(request: NextRequest) {
 
             // Send updated stats periodically
             if ((i + 1) % BATCH_SIZE === 0 || i === files.length - 1) {
-              sendSSEMessage(controller, {
+              safeSendSSE(controller, {
                 type: 'stats',
                 stats
               });
@@ -428,19 +464,19 @@ export async function GET(request: NextRequest) {
                 baseBranch
               );
 
-              sendSSEMessage(controller, {
+              safeSendSSE(controller, {
                 type: 'success',
                 message: `✓ Created pull request #${pr.number}`
               });
             } catch (prError) {
-              sendSSEMessage(controller, {
+              safeSendSSE(controller, {
                 type: 'error',
                 message: `✗ Failed to create PR: ${prError instanceof Error ? prError.message : 'Unknown error'}`
               });
             }
           }
 
-          sendSSEMessage(controller, {
+          safeSendSSE(controller, {
             type: 'complete',
             newBranch,
             stats
@@ -448,11 +484,12 @@ export async function GET(request: NextRequest) {
 
         } catch (error) {
           console.error('Error in enhancement cycle:', error);
-          sendSSEMessage(controller, {
+          safeSendSSE(controller, {
             type: 'error',
             message: `Fatal error: ${error instanceof Error ? error.message : 'Unknown error'}`
           });
         } finally {
+          clearTimeout(timeoutId);
           controller.close();
         }
       }

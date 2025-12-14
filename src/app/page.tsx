@@ -227,6 +227,27 @@ export default function Home() {
   const [showConfig, setShowConfig] = useState(false);
   const [configSaved, setConfigSaved] = useState(false);
 
+  // Initialize configuration from environment variables
+  useEffect(() => {
+    const loadExistingConfig = async () => {
+      try {
+        const response = await fetch('/api/config');
+        if (response.ok) {
+          const config = await response.json();
+          if (config.data?.github?.configured && config.data?.gemini?.configured) {
+            // Set placeholder values to indicate configuration exists
+            setGithubToken('••••••••••••••••••••••••••••••••');
+            setGeminiApiKey('••••••••••••••••••••••••••••••••');
+          }
+        }
+      } catch (error) {
+        console.log('No existing configuration found');
+      }
+    };
+    
+    loadExistingConfig();
+  }, []);
+
   // Custom hooks
   const { lines: terminalLines, addLine, clearLines } = useTerminal();
   const { 
@@ -269,6 +290,12 @@ export default function Home() {
 
   // Enhanced API configuration with better error handling
   const saveConfiguration = useCallback(async (): Promise<boolean> => {
+    // Skip saving if values are just placeholders (already configured)
+    if (githubToken.includes('••••') && geminiApiKey.includes('••••')) {
+      addLine('Configuration already exists and is valid', 'success');
+      return true;
+    }
+
     if (!githubToken.trim() || !geminiApiKey.trim()) {
       addLine('Error: Both GitHub token and Gemini API key are required', 'error');
       return false;
@@ -290,6 +317,11 @@ export default function Home() {
         setConfigSaved(true);
         addLine('✓ Configuration saved successfully', 'success');
         setTimeout(() => setConfigSaved(false), CONFIG_SUCCESS_TIMEOUT);
+        
+        // Update UI to show placeholders after successful save
+        setGithubToken('••••••••••••••••••••••••••••••••');
+        setGeminiApiKey('••••••••••••••••••••••••••••••••');
+        
         return true;
       } else {
         const error = await response.json().catch(() => ({ message: 'Unknown error' }));
