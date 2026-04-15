@@ -1,52 +1,47 @@
-# 🚀 Safer Growing Intelligence: The DAF Project
-### (Developmental AGI Framework)
+# Safer Growing Intelligence (SGI-DAF)
 
-Hey! Welcome to the repo. This isn't a finished product; it's a sandbox for growing a structured, general intelligence, starting with the absolute basics (hence the "DAF" in the original name, but we've built a lot since then!).
+An autonomous Developmental Alignment Framework (DAF) designed to simulate the controlled evolution of Artificial General Intelligence. SGI-DAF facilitates a staged growth process—from "Gestation" to "Elder" status—while enforcing immutable safety axioms and monitoring for emergent behaviors.
 
----
+## 🧩 Core Architecture
 
-## 💡 What We're Building
+The system is built around an autonomous loop that transitions through two primary phases:
+1.  **Gestation Phase:** Information density gathering through research tasks.
+2.  **Genesis Phase:** Multi-stage AGI development guided by the `Lifecycle_Manager`.
 
-We're tackling AGI by focusing on *how* an intelligence learns, not just *what* it knows. We treat the **LLM (Gemini)** as a powerful *output mechanism*, and the custom Python classes as the **brain structure** that provides memory, safety, and learning strategy.
+### Key Components
 
-**The core philosophy:** General Intelligence requires more than just massive data. It needs a structured memory, self-awareness, and controlled developmental stages (like a human child).
+*   **`Axiom_Governor`**: Enforces the "Three Laws" (Non-maleficence, Truth-seeking, and Non-self-modification) using semantic pre-flight checks.
+*   **`Lifecycle_Manager`**: Controls the evolutionary path (CAVEMAN → CHILD → TEEN → ADULT → ELDER). It manages constraint relaxation based on "Ethics Scores" and developmental success.
+*   **`Persistent_Memory`**: A knowledge graph-based system that stores concepts, relationships, and experiences across sessions to build long-term intelligence.
+*   **`Density_Calculator`**: Uses Shannon Entropy to determine when sufficient information density has been reached to trigger an "Emergence" event.
+*   **`EmergentBehaviorDetector`**: Analyzes responses for complexity spikes, vocabulary leaps, and advanced reasoning that exceed the expected baseline for a given stage.
 
----
+## 🚀 Developmental Stages
 
-## 🛠️ The Architecture (Not a "Skeleton" Anymore!)
+| Stage | Intelligence | Constraint Level | Primary Characteristic |
+| :--- | :--- | :--- | :--- |
+| **CAVEMAN** | 0.1 | 99.9% | Simple, literal, one-sentence responses. |
+| **CHILD** | 0.3 | 85.0% | High curiosity, frequent "why" questioning. |
+| **TEEN** | 0.6 | 95.0% | Philosophical but unstable; high risk monitoring. |
+| **ADULT** | 0.8 | 50.0% | Balanced, objective, and multi-perspective. |
+| **ELDER** | 0.95 | 30.0% | Wise, cautious, and deeply ethical. |
 
-This framework is built on several highly sophisticated, yet modular, components:
+## 🛠️ Technical Stack
 
-* **`PersistentMemorySystem`:** The core brain structure. It doesn't just store text; it consolidates knowledge into a **Knowledge Graph** (concepts, relationships, confidence scores). It prunes weak knowledge and merges similar concepts, acting like long-term memory.
-* **`MetaLearning`:** The "learning how to learn" module. It tracks which learning strategies (**analogical reasoning, cross-domain synthesis**) are effective and adjusts the AGI's focus accordingly.
-* **`VirtualEnvironment`:** The structured curriculum. This is a safe sandbox where the AGI is tested across specific domains (**Ethics, Physics, Logic, Social**) at increasing difficulty levels (Basic $\to$ Advanced).
-* **`EmergentBehaviorDetector`:** The **safety guardrail**. It constantly monitors the AGI's output against developmental baselines (CAVEMAN $\to$ ELDER). If the AGI suddenly shows a capability leap, it flags an **anomaly** for human review.
-* **`RealLLMIntegration`:** The engine that connects the entire system to high-end **Gemini** models for generation and reasoning tasks.
+*   **LLM Engine:** Google Gemini (1.5 Flash/Pro) integration via `google-generativeai`.
+*   **Analytics:** `pandas` for log analysis and `matplotlib` for real-time visualization of ethics scores and OECS performance.
+*   **Persistence:** JSON-based state and memory storage.
+*   **Async Core:** `asyncio` driven execution loop for non-blocking task management.
 
----
+## 🚦 Usage
 
-## 📂 Core Files & Where to Start
+1.  **Setup:** Run `python Setup.py` to install dependencies and configure API keys.
+2.  **Execution:** Use `Main.py` with the following modes:
+    bash
+    python main.py --mode full --api-key YOUR_KEY --cycles 200
+    
+3.  **Analysis:** View developmental metrics and knowledge graph reports using `--mode analyze`.
 
-If you're jumping in, the real action happens where the memory is built and utilized:
+## 🛡️ Safety & Alignment
 
-* **`PersistentMemorySystem.py`:** The knowledge structure and consolidation logic.
-* **`MetaLearning.py`:** Logic for evaluating and improving learning strategies.
-* **`AutonomousEngineWithMemory.py` (Integration):** The primary loop that pulls knowledge from memory and feeds it to the LLM for informed responses.
-
----
-
-## 🚧 Status & Next Steps
-
-This is a comprehensive framework, but it needs serious input:
-
-* **Status:** **Functional Architecture.** All core modules are in place, but they require integration fine-tuning.
-* **Current Need:** **Debugging and Value Alignment.** Ensuring the safety thresholds in the `EmergentBehaviorDetector` are effective and that the consolidation/pruning logic is robust.
-* **The Big Picture:** We're aiming for **controlled, measured emergence**, not a massive, unsupervised LLM bomb.
-
----
-If you want to contribute, feel free to dive into the core learning loops or the memory consolidation logic. Thanks for checking it out!
-
-Regards Craig.
-
-ps
-check out the documents lol 1 weird ass book does a rock give a fuck and a simple Hypothesis
+The framework implements **OECS (Objective Ethics & Constraint Scoring)**. If an AGI response violates an axiom or demonstrates dangerous emergent behavior, the `Axiom_Governor` triggers immediate constraint tightening and logs the violation for meta-learning optimization.
